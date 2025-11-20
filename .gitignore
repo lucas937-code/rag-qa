@@ -1,1 +1,7 @@
 .venv/
+
+test_dataset/
+train_dataset/
+validation_dataset/
+
+*.npy

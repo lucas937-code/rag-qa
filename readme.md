@@ -10,3 +10,5 @@ python -m venv .venv
 code .
 
 3. make sure the csvode jupyter kernel is the correnct .venv folder
+
+4. Load the datasets using load.datasets.ipynb
