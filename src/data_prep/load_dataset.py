@@ -165,6 +165,72 @@ def get_local_sample(
 # Public API: full dataset (e.g. Colab)
 # =====================
 
+def stream_hf_to_parquet(
+    dataset_name: str,
+    subset: str | None,
+    split: str,
+    out_file: str,
+    batch_size: int = 1000,
+):
+    """
+    Stream a HF Dataset split and write it incrementally to Parquet.
+
+    - Does NOT load entire dataset into RAM.
+    - Safe for Colab.
+
+    Parameters
+    ----------
+    dataset_name, subset, split: HF identifiers
+    out_file: absolute path to Parquet file (in Google Drive)
+    batch_size: how many rows to accumulate before writing a chunk
+    """
+    from datasets import load_dataset
+    import pandas as pd
+    from pathlib import Path
+
+    ds_stream = load_dataset(
+        dataset_name,
+        subset,
+        split=split,
+        streaming=True
+    )
+
+    out_path = Path(out_file)
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+
+    # Arrow/Parquet writer prepared later
+    writer = None
+    schema = None
+    count = 0
+
+    batch = []
+
+    for row in ds_stream:
+        batch.append(row)
+        count += 1
+
+        if len(batch) >= batch_size:
+            df = pd.DataFrame(batch)
+            batch = []
+
+            if schema is None:
+                schema = df
+                df.to_parquet(out_path, index=False)
+            else:
+                df.to_parquet(out_path, index=False, append=True)
+
+            print(f"Wrote {count} rows...")
+
+    # last partial batch
+    if batch:
+        df = pd.DataFrame(batch)
+        df.to_parquet(out_path, index=False, append=True)
+        count += len(df)
+
+    print(f"Finished streaming {count} rows to {out_path}")
+    return out_file
+
+
 def prepare_full_dataset(
     output_dir: str,
     dataset_name: str = "trivia_qa",
@@ -201,15 +267,17 @@ def prepare_full_dataset(
     paths: Dict[str, Path] = {}
 
     for split in splits:
-        logger.info("Preparing split '%s'...", split)
-        ds = _load_hf_split(dataset_name, subset, split, streaming=False)
-
-        max_examples = None
-        if max_examples_per_split is not None:
-            max_examples = max_examples_per_split.get(split)
-
         out_file = base / f"{split}.parquet"
-        paths[split] = _save_split_to_parquet(ds, out_file, max_examples=max_examples)
+
+        stream_hf_to_parquet(
+            dataset_name=dataset_name,
+            subset=subset,
+            split=split,
+            out_file=str(out_file),
+            batch_size=1000,
+        )
+
+        paths[split] = out_file
 
     logger.info("Finished preparing splits: %s", paths)
     return paths
