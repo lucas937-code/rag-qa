@@ -15,6 +15,8 @@ import logging
 
 import pandas as pd
 from datasets import load_dataset, Dataset, IterableDataset
+import pyarrow as pa
+import pyarrow.parquet as pq
 
 logger = logging.getLogger(__name__)
 
@@ -200,35 +202,36 @@ def stream_hf_to_parquet(
 
     # Arrow/Parquet writer prepared later
     writer = None
-    schema = None
-    count = 0
-
+    total_rows = 0
     batch = []
 
     for row in ds_stream:
         batch.append(row)
-        count += 1
 
         if len(batch) >= batch_size:
-            df = pd.DataFrame(batch)
+            table = pa.Table.from_pylist(batch)
             batch = []
 
-            if schema is None:
-                schema = df
-                df.to_parquet(out_path, index=False)
-            else:
-                df.to_parquet(out_path, index=False)
+            if writer is None:
+                writer = pq.ParquetWriter(out_path, table.schema)
+            writer.write_table(table)
 
-            print(f"Wrote {count} rows...")
+            total_rows += table.num_rows
+            print(f"Wrote {total_rows} rows...")
 
-    # last partial batch
+    # letzte (unvollständige) Batch
     if batch:
-        df = pd.DataFrame(batch)
-        df.to_parquet(out_path, index=False)
-        count += len(df)
+        table = pa.Table.from_pylist(batch)
+        if writer is None:
+            writer = pq.ParquetWriter(out_path, table.schema)
+        writer.write_table(table)
+        total_rows += table.num_rows
 
-    print(f"Finished streaming {count} rows to {out_path}")
-    return out_file
+    if writer is not None:
+        writer.close()
+
+    print(f"Finished streaming {total_rows} rows to {out_path}")
+    return str(out_path)
 
 
 def prepare_full_dataset(
@@ -236,7 +239,8 @@ def prepare_full_dataset(
     dataset_name: str = "trivia_qa",
     subset: Optional[str] = "rc.wikipedia",
     splits: Sequence[str] = ("train", "validation"),
-    max_examples_per_split: Optional[Dict[str, int]] = None,
+    use_streaming: bool = True,
+    batch_size: int = 1000,
 ) -> Dict[str, Path]:
     """
     Download/load the full dataset splits and save them as Parquet files.
@@ -269,15 +273,20 @@ def prepare_full_dataset(
     for split in splits:
         out_file = base / f"{split}.parquet"
 
-        stream_hf_to_parquet(
-            dataset_name=dataset_name,
-            subset=subset,
-            split=split,
-            out_file=str(out_file),
-            batch_size=1000,
-        )
+        if use_streaming:
+            # Streaming-Version (für große Splits / Colab)
+            stream_hf_to_parquet(
+                dataset_name=dataset_name,
+                subset=subset,
+                split=split,
+                out_file=str(out_file),
+                batch_size=batch_size,
+            )
+        else:
+            # Fallback: kleine Splits klassisch laden (nicht streaming)
+            ds = _load_hf_split(dataset_name, subset, split, streaming=False)
+            _save_split_to_parquet(ds, out_file, max_examples=None)
 
         paths[split] = out_file
 
-    logger.info("Finished preparing splits: %s", paths)
     return paths
