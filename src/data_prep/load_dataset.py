@@ -217,14 +217,14 @@ def stream_hf_to_parquet(
                 schema = df
                 df.to_parquet(out_path, index=False)
             else:
-                df.to_parquet(out_path, index=False, append=True)
+                df.to_parquet(out_path, index=False)
 
             print(f"Wrote {count} rows...")
 
     # last partial batch
     if batch:
         df = pd.DataFrame(batch)
-        df.to_parquet(out_path, index=False, append=True)
+        df.to_parquet(out_path, index=False)
         count += len(df)
 
     print(f"Finished streaming {count} rows to {out_path}")
