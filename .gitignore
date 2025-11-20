@@ -5,3 +5,5 @@ train_dataset/
 validation_dataset/
 
 *.npy
+
+src/playground/
