@@ -86,12 +86,54 @@ def _save_split_to_parquet(
     if max_examples is not None:
         ds = ds.select(range(min(max_examples, len(ds))))
 
-    df = ds.to_pandas()
+    rows = []
+    for item in ds:
+        if item is None:
+            continue
+        rows.append(_flatten_triviaqa_row(item))
+
+    df = pd.DataFrame(rows)
+
+
     out_path.parent.mkdir(parents=True, exist_ok=True)
     df.to_parquet(out_path)
 
     logger.info("Saved %d rows to %s", len(df), out_path)
     return out_path
+
+def _flatten_triviaqa_row(row: dict) -> dict:
+    """
+    Extract and flatten the relevant fields from a TriviaQA row.
+    Removes nested structures that cannot be written to Parquet.
+    """
+    out = {}
+
+    # Basic identifiers
+    out["question_id"] = row.get("question_id") or row.get("question") or None
+    out["question"] = row.get("question")
+    
+    # Acceptable answers (TriviaQA returns a dict: {'aliases': [...], 'normalized_aliases': [...]})
+    ans = row.get("answer", {})
+    if isinstance(ans, dict):
+        out["answer_aliases"] = ans.get("aliases")
+        out["answer_normalized"] = ans.get("normalized_aliases")
+    else:
+        out["answer_aliases"] = None
+        out["answer_normalized"] = None
+
+    # Evidence pages (hugely nested: list of pages, each page has search_results, doc_content, etc.)
+    # → extract only the raw text if available, otherwise skip
+    ev = row.get("entity_pages")
+    if isinstance(ev, list) and len(ev) > 0:
+        # Take first page as text source (common in many RAG baselines)
+        page = ev[0]
+        out["doc_title"] = page.get("title")
+        out["evidence_text"] = page.get("wiki_context", None)
+    else:
+        out["doc_title"] = None
+        out["evidence_text"] = None
+
+    return out
 
 
 # =====================
