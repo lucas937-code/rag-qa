@@ -28,7 +28,7 @@ def _load_hf_split(
     subset: Optional[str],
     split: str,
     streaming: bool = False,
-) -> Dataset | IterableDataset:
+) -> Dataset:
     """
     Load a single split from Hugging Face Datasets.
 
@@ -56,6 +56,9 @@ def _load_hf_split(
         "Loaded HF split %s (%s, subset=%s, streaming=%s)",
         split, dataset_name, subset, streaming
     )
+
+    if type(ds) is not Dataset:
+        raise ValueError("Expected Dataset or IterableDataset from load_dataset")
     return ds
 
 
@@ -88,7 +91,7 @@ def _save_split_to_parquet(
 
     rows = []
     for item in ds:
-        if item is None:
+        if type(item) is not dict[object, object]:
             continue
         rows.append(_flatten_triviaqa_row(item))
 
@@ -199,7 +202,13 @@ def get_local_sample(
         ds_small = ds
 
     if as_pandas:
-        return ds_small.to_pandas()
+        # HF Dataset.to_pandas() may in some versions return an iterator of DataFrames for large datasets;
+        # ensure we always return a concrete pandas.DataFrame to match the function's return type.
+        df = ds_small.to_pandas()
+        if not isinstance(df, pd.DataFrame):
+            # materialize iterator into a single DataFrame
+            df = pd.concat(list(df), ignore_index=True)
+        return df
     return ds_small
 
 
