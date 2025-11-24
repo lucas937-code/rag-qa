@@ -7,7 +7,12 @@ This repository contains a sharded version of the **TriviaQA (Wikipedia RC)** da
 - `structure.py` Views an overview of the dataset dimensionality and datatypes. An output of this is saved in `structure.txt`
 - `structure.txt`: Output of `structure.py`
 - `explore.py`: Get some distribution information as well as sample questions with answers.
+- `explore.txt`: Output of explore
 - `save_embedings.py`: Save Embeding. Also gives out sample retreives for a given question.
+- `save_embedings_chunking.py`: Now with chunking. Parameters can be specified.
+
+Runtime approx. 1h40min on i7-8700 CPU @ 3.20GHz & NVIDIA GeForce RTX 2080 
+
 - `rag.py`: Performs the generation part as well for a sample question. Note: Right now the performance is poor, possibly due to a to small model.
 - `rag_lama.py`: In theory working rag with lama, but due to a lack of disk space i could not download it as for now (15gb).
 
