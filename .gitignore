@@ -5,3 +5,4 @@ train_dataset/
 validation_dataset/
 
 *.npy
+loading data/corpus_embeddings.pkl
