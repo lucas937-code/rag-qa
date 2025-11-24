@@ -1,4 +1,3 @@
-# rag_flan_t5_base_reduced_topk.py
 import os
 import pickle
 import torch
@@ -12,12 +11,11 @@ from transformers import AutoTokenizer, AutoModelForSeq2SeqLM
 # ------------------------------
 EMBEDDINGS_FILE = "corpus_embeddings.pkl"
 EMBED_MODEL_NAME = "all-MiniLM-L6-v2"
-GEN_MODEL_NAME = "google/flan-t5-large"  # Upgraded model
-TOP_K = 3  # Reduced number of passages for memory efficiency
+GEN_MODEL_NAME = "google/flan-t5-large"
+TOP_K = 3
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 MAX_GEN_TOKENS = 128
-MAX_PASSAGES_PER_CHUNK = 2  # Process 1–2 passages at a time to save memory
-MAX_INPUT_LENGTH = 512       # Truncate input sequences
+MAX_INPUT_LENGTH = 512
 
 # ------------------------------
 # Load corpus embeddings
@@ -35,7 +33,7 @@ print(f"Loaded {len(corpus)} passages and embeddings.")
 embed_model = SentenceTransformer(EMBED_MODEL_NAME, device=DEVICE)
 
 # ------------------------------
-# Load Flan-T5-base generator
+# Load Flan-T5 generator
 # ------------------------------
 tokenizer = AutoTokenizer.from_pretrained(GEN_MODEL_NAME)
 model = AutoModelForSeq2SeqLM.from_pretrained(GEN_MODEL_NAME).to(DEVICE)
@@ -51,17 +49,16 @@ def retrieve(query, top_k=TOP_K):
     return [corpus[i] for i in top_idx]
 
 # ------------------------------
-# Generate answer in chunks
+# Generate single answer
 # ------------------------------
-def generate_answer_chunked(query, context_passages):
-    chunked_answers = []
-
-    # Break passages into small chunks
-    for i in range(0, len(context_passages), MAX_PASSAGES_PER_CHUNK):
-        chunk = context_passages[i:i + MAX_PASSAGES_PER_CHUNK]
-        context = "\n\n".join(chunk)
-        prompt = f"Answer the question based on the context below:\nContext: {context}\nQuestion: {query}\nAnswer:"
-
+def generate_answer_single(query, context_passages):
+    """
+    Generate an answer using the top retrieved chunks.
+    Returns only the first non-empty answer.
+    """
+    for chunk in context_passages[:TOP_K]:
+        prompt = f"Answer the question based on the context below:\nContext: {chunk}\nQuestion: {query}\nAnswer:"
+        # print(prompt)
         inputs = tokenizer(
             prompt,
             return_tensors="pt",
@@ -75,24 +72,23 @@ def generate_answer_chunked(query, context_passages):
                 max_new_tokens=MAX_GEN_TOKENS
             )
 
-        answer = tokenizer.decode(output_ids[0], skip_special_tokens=True)
-        chunked_answers.append(answer.strip())
+        answer = tokenizer.decode(output_ids[0], skip_special_tokens=True).strip()
+        if answer:
+            return answer
 
-    # Combine partial answers into final answer
-    final_answer = " ".join(chunked_answers)
-    return final_answer
+    return "No answer found."
 
 # ------------------------------
 # Main
 # ------------------------------
 if __name__ == "__main__":
-    query = "In which US state is Lower Lake?"
+    query = "The medical condition glaucoma affects which part of the body?"
     top_passages = retrieve(query)
 
     print("Retrieved top passages:")
     for i, p in enumerate(top_passages):
         print(f"{i+1}. {p[:200].replace(chr(10), ' ')}...")
 
-    answer = generate_answer_chunked(query, top_passages)
+    answer = generate_answer_single(query, top_passages)
     print("\nGenerated Answer:")
     print(answer)
