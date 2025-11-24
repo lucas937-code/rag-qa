@@ -15,8 +15,6 @@ import logging
 
 import pandas as pd
 from datasets import load_dataset, Dataset, IterableDataset
-import pyarrow as pa
-import pyarrow.parquet as pq
 
 logger = logging.getLogger(__name__)
 
@@ -88,12 +86,54 @@ def _save_split_to_parquet(
     if max_examples is not None:
         ds = ds.select(range(min(max_examples, len(ds))))
 
-    df = ds.to_pandas()
+    rows = []
+    for item in ds:
+        if item is None:
+            continue
+        rows.append(_flatten_triviaqa_row(item))
+
+    df = pd.DataFrame(rows)
+
+
     out_path.parent.mkdir(parents=True, exist_ok=True)
     df.to_parquet(out_path)
 
     logger.info("Saved %d rows to %s", len(df), out_path)
     return out_path
+
+def _flatten_triviaqa_row(row: dict) -> dict:
+    """
+    Extract and flatten the relevant fields from a TriviaQA row.
+    Removes nested structures that cannot be written to Parquet.
+    """
+    out = {}
+
+    # Basic identifiers
+    out["question_id"] = row.get("question_id") or row.get("question") or None
+    out["question"] = row.get("question")
+    
+    # Acceptable answers (TriviaQA returns a dict: {'aliases': [...], 'normalized_aliases': [...]})
+    ans = row.get("answer", {})
+    if isinstance(ans, dict):
+        out["answer_aliases"] = ans.get("aliases")
+        out["answer_normalized"] = ans.get("normalized_aliases")
+    else:
+        out["answer_aliases"] = None
+        out["answer_normalized"] = None
+
+    # Evidence pages (hugely nested: list of pages, each page has search_results, doc_content, etc.)
+    # → extract only the raw text if available, otherwise skip
+    ev = row.get("entity_pages")
+    if isinstance(ev, list) and len(ev) > 0:
+        # Take first page as text source (common in many RAG baselines)
+        page = ev[0]
+        out["doc_title"] = page.get("title")
+        out["evidence_text"] = page.get("wiki_context", None)
+    else:
+        out["doc_title"] = None
+        out["evidence_text"] = None
+
+    return out
 
 
 # =====================
@@ -139,7 +179,7 @@ def get_local_sample(
     """
     ds = _load_hf_split(dataset_name, subset, split, streaming=streaming)
 
-    # streaming mode: we iterate manually up to max_examples and build a DataFrame
+    # Streaming-Mode: wir iterieren einfach ein wenig und bauen einen kleinen DF
     if streaming:
         logger.info(
             "Using streaming mode for local sample (max_examples=%d)", max_examples
@@ -152,7 +192,7 @@ def get_local_sample(
         df = pd.DataFrame(rows)
         return df if as_pandas else ds
 
-    # non-streaming mode: we can use select to get a subset
+    # Nicht-streaming: komplette HF Dataset-Instanz, aber wir schneiden es auf max_examples zu
     if max_examples is not None:
         ds_small = ds.select(range(min(max_examples, len(ds))))
     else:
@@ -167,80 +207,12 @@ def get_local_sample(
 # Public API: full dataset (e.g. Colab)
 # =====================
 
-def stream_hf_to_parquet(
-    dataset_name: str,
-    subset: str | None,
-    split: str,
-    out_file: str,
-    batch_size: int = 1000,
-):
-    """
-    Stream a HF Dataset split and write it incrementally to Parquet.
-
-    - Does NOT load entire dataset into RAM.
-    - Safe for Colab.
-
-    Parameters
-    ----------
-    dataset_name, subset, split: HF identifiers
-    out_file: absolute path to Parquet file (in Google Drive)
-    batch_size: how many rows to accumulate before writing a chunk
-    """
-    from datasets import load_dataset
-    import pandas as pd
-    from pathlib import Path
-
-    ds_stream = load_dataset(
-        dataset_name,
-        subset,
-        split=split,
-        streaming=True
-    )
-
-    out_path = Path(out_file)
-    out_path.parent.mkdir(parents=True, exist_ok=True)
-
-    # Arrow/Parquet writer prepared later
-    writer = None
-    total_rows = 0
-    batch = []
-
-    for row in ds_stream:
-        batch.append(row)
-
-        if len(batch) >= batch_size:
-            table = pa.Table.from_pylist(batch)
-            batch = []
-
-            if writer is None:
-                writer = pq.ParquetWriter(out_path, table.schema)
-            writer.write_table(table)
-
-            total_rows += table.num_rows
-            print(f"Wrote {total_rows} rows...")
-
-    # letzte (unvollständige) Batch
-    if batch:
-        table = pa.Table.from_pylist(batch)
-        if writer is None:
-            writer = pq.ParquetWriter(out_path, table.schema)
-        writer.write_table(table)
-        total_rows += table.num_rows
-
-    if writer is not None:
-        writer.close()
-
-    print(f"Finished streaming {total_rows} rows to {out_path}")
-    return str(out_path)
-
-
 def prepare_full_dataset(
     output_dir: str,
     dataset_name: str = "trivia_qa",
     subset: Optional[str] = "rc.wikipedia",
     splits: Sequence[str] = ("train", "validation"),
-    use_streaming: bool = True,
-    batch_size: int = 1000,
+    max_examples_per_split: Optional[Dict[str, int]] = None,
 ) -> Dict[str, Path]:
     """
     Download/load the full dataset splits and save them as Parquet files.
@@ -271,22 +243,15 @@ def prepare_full_dataset(
     paths: Dict[str, Path] = {}
 
     for split in splits:
+        logger.info("Preparing split '%s'...", split)
+        ds = _load_hf_split(dataset_name, subset, split, streaming=False)
+
+        max_examples = None
+        if max_examples_per_split is not None:
+            max_examples = max_examples_per_split.get(split)
+
         out_file = base / f"{split}.parquet"
+        paths[split] = _save_split_to_parquet(ds, out_file, max_examples=max_examples)
 
-        if use_streaming:
-            # Streaming-Version (für große Splits / Colab)
-            stream_hf_to_parquet(
-                dataset_name=dataset_name,
-                subset=subset,
-                split=split,
-                out_file=str(out_file),
-                batch_size=batch_size,
-            )
-        else:
-            # Fallback: kleine Splits klassisch laden (nicht streaming)
-            ds = _load_hf_split(dataset_name, subset, split, streaming=False)
-            _save_split_to_parquet(ds, out_file, max_examples=None)
-
-        paths[split] = out_file
-
+    logger.info("Finished preparing splits: %s", paths)
     return paths
