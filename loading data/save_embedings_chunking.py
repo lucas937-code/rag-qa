@@ -88,7 +88,7 @@ def main():
         # print(dataset[0])
         
         # DEBUG TODO REMOVE LATER!!!!
-        dataset = dataset.select(range(1000))  # limit to first 100 examples for testing
+        # dataset = dataset.select(range(1000))  # limit to first 100 examples for testing
 
         # 2. Extract and chunk passages
         corpus = extract_passages(dataset)
