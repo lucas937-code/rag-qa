@@ -35,3 +35,21 @@ append matthias pipeline on lucas code
 
 next:
 compare embedding and retrieve
+
+---------
+plakat
+
+comare with or without tokenizer
+
+top k retriever comparison
+
+
+compare 2 llms at generator part
+
+
+visualize pipeline
+concrete exampel with question, retrieved chunks, generated answer, expected answer.
+
+evaluation of whole pipeline
+
+compare acc on test and train dataset
