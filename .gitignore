@@ -6,3 +6,4 @@ validation_dataset/
 
 *.npy
 loading data/corpus_embeddings.pkl
+loading data/corpus_embeddings_unique.pkl
