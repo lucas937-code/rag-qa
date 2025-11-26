@@ -9,7 +9,7 @@ Design:
 - prepare_full_dataset(...) -> download full dataset and write splits to disk
 """
 
-from typing import Optional, Sequence, Dict
+from typing import Optional, Sequence, Dict, Any, List
 from pathlib import Path
 import logging
 
@@ -63,6 +63,8 @@ def _save_split_to_parquet(
     ds: Dataset,
     out_path: Path,
     max_examples: Optional[int] = None,
+    dataset_name: Optional[str] = None,
+    subset: Optional[str] = None,
 ) -> Path:
     """
     Save a (non-streaming) HF Dataset split to Parquet.
@@ -86,13 +88,77 @@ def _save_split_to_parquet(
     if max_examples is not None:
         ds = ds.select(range(min(max_examples, len(ds))))
 
-    df = ds.to_pandas()
+    # Detect TriviaQA rc.wikipedia and flatten it to a Parquet-friendly schema.
+    if dataset_name == "trivia_qa" and (subset == "rc.wikipedia" or subset is None):
+        rows = []
+        for row in ds:
+            rows.append(_flatten_triviaqa_row(row))
+        df = pd.DataFrame(rows)
+    else:
+        # Fallback: directly convert to pandas for simpler datasets
+        df = ds.to_pandas()
+
     out_path.parent.mkdir(parents=True, exist_ok=True)
     df.to_parquet(out_path)
 
     logger.info("Saved %d rows to %s", len(df), out_path)
     return out_path
 
+def _flatten_triviaqa_row(row: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Extract and flatten the relevant fields from a TriviaQA row (rc.wikipedia).
+    This removes deeply nested structures that cannot be written to Parquet
+    and keeps only what we need for our RAG pipeline.
+
+    Resulting schema (per row):
+    - question_id: str
+    - question: str
+    - answer_aliases: List[str] or None
+    - answer_normalized: List[str] or None
+    - doc_titles: List[str] or None
+    - evidence_texts: List[str] or None
+    """
+    out: Dict[str, Any] = {}
+
+    # Basic fields
+    out["question_id"] = row.get("question_id")
+    out["question"] = row.get("question")
+
+    # Answer (may be a dict with 'aliases' and 'normalized_aliases')
+    ans = row.get("answer", {})
+    if isinstance(ans, dict):
+        out["answer_aliases"] = ans.get("aliases")
+        out["answer_normalized"] = ans.get("normalized_aliases")
+    else:
+        out["answer_aliases"] = None
+        out["answer_normalized"] = None
+
+    # Evidence from entity_pages: collect titles and wiki_context texts
+    doc_titles: List[str] = []
+    evidence_texts: List[str] = []
+
+    entity_pages = row.get("entity_pages", [])
+    if isinstance(entity_pages, list):
+        for page in entity_pages:
+            if not isinstance(page, dict):
+                continue
+            title = page.get("title")
+            if title:
+                doc_titles.append(title)
+
+            # TriviaQA rc.wikipedia typically uses 'wiki_context' as the text field
+            ctx = (
+                page.get("wiki_context")
+                or page.get("context")
+                or page.get("document")
+            )
+            if ctx:
+                evidence_texts.append(ctx)
+
+    out["doc_titles"] = doc_titles or None
+    out["evidence_texts"] = evidence_texts or None
+
+    return out
 
 # =====================
 # Public API: local dev
@@ -157,7 +223,15 @@ def get_local_sample(
         ds_small = ds
 
     if as_pandas:
+        # For TriviaQA rc.wikipedia, return the same flattened schema we use for Parquet
+        if dataset_name == "trivia_qa" and (subset == "rc.wikipedia" or subset is None):
+            rows = []
+            for row in ds_small:
+                rows.append(_flatten_triviaqa_row(row))
+            return pd.DataFrame(rows)
+        # Default: just convert to pandas
         return ds_small.to_pandas()
+
     return ds_small
 
 
@@ -209,7 +283,13 @@ def prepare_full_dataset(
             max_examples = max_examples_per_split.get(split)
 
         out_file = base / f"{split}.parquet"
-        paths[split] = _save_split_to_parquet(ds, out_file, max_examples=max_examples)
+        paths[split] = _save_split_to_parquet(
+            ds,
+            out_file,
+            max_examples=max_examples,
+            dataset_name=dataset_name,
+            subset=subset,
+        )
 
     logger.info("Finished preparing splits: %s", paths)
     return paths
