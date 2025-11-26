@@ -15,6 +15,7 @@ import logging
 
 import pandas as pd
 from datasets import load_dataset, Dataset, IterableDataset
+import json
 
 logger = logging.getLogger(__name__)
 
@@ -106,15 +107,15 @@ def _save_split_to_parquet(
 
 def _flatten_triviaqa_row(row: Dict[str, Any]) -> Dict[str, Any]:
     """
-    Extract and flatten the relevant fields from a TriviaQA row (rc.wikipedia).
+    Extract and flatten the relevant fields from a TriviaQA rc.wikipedia row.
 
     Resulting schema (per row):
     - question_id: str
     - question: str
-    - answer_aliases: List[str] or None
-    - answer_normalized: List[str] or None
-    - doc_titles: List[str] or None
-    - evidence_texts: List[str] or None
+    - answer_aliases_json: str (JSON list) or None
+    - answer_normalized_json: str (JSON list) or None
+    - doc_titles_json: str (JSON list) or None
+    - evidence_text: str or None
     """
     out: Dict[str, Any] = {}
 
@@ -124,65 +125,78 @@ def _flatten_triviaqa_row(row: Dict[str, Any]) -> Dict[str, Any]:
 
     # Answer (dict with 'aliases' and 'normalized_aliases')
     ans = row.get("answer", {})
-    if isinstance(ans, dict):
-        out["answer_aliases"] = ans.get("aliases")
-        out["answer_normalized"] = ans.get("normalized_aliases")
-    else:
-        out["answer_aliases"] = None
-        out["answer_normalized"] = None
+    aliases: List[str] = []
+    norm_aliases: List[str] = []
 
-    # Evidence: TriviaQA rc.wikipedia uses a *columnar dict* for entity_pages:
-    # {
-    #   "title": [...],
-    #   "wiki_context": [...],
-    #   ...
-    # }
+    if isinstance(ans, dict):
+        a = ans.get("aliases") or []
+        na = ans.get("normalized_aliases") or []
+        if isinstance(a, list):
+            aliases = [str(x) for x in a]
+        else:
+            aliases = [str(a)]
+        if isinstance(na, list):
+            norm_aliases = [str(x) for x in na]
+        else:
+            norm_aliases = [str(na)]
+
+    out["answer_aliases_json"] = (
+        json.dumps(aliases, ensure_ascii=False) if aliases else None
+    )
+    out["answer_normalized_json"] = (
+        json.dumps(norm_aliases, ensure_ascii=False) if norm_aliases else None
+    )
+
+    # Titles & contexts from entity_pages
     doc_titles: List[str] = []
-    evidence_texts: List[str] = []
+    contexts: List[str] = []
 
     entity_pages = row.get("entity_pages")
 
+    # Case 1: dict-of-lists (what your example shows)
     if isinstance(entity_pages, dict):
         titles = entity_pages.get("title") or []
-        contexts = (
+        wiki_contexts = (
             entity_pages.get("wiki_context")
             or entity_pages.get("context")
             or entity_pages.get("document")
             or []
         )
 
-        # ensure list-ness
-        if isinstance(titles, str):
+        if not isinstance(titles, list):
             titles = [titles]
-        if isinstance(contexts, str):
-            contexts = [contexts]
+        if not isinstance(wiki_contexts, list):
+            wiki_contexts = [wiki_contexts]
 
-        # lengths können sich unterscheiden; zip nimmt die sichere Schnittmenge
-        for t, ctx in zip(titles, contexts):
+        for t in titles:
             if t:
-                doc_titles.append(t)
-            if ctx:
-                evidence_texts.append(ctx)
+                doc_titles.append(str(t))
 
+        for ctx in wiki_contexts:
+            if ctx:
+                contexts.append(str(ctx))
+
+    # Case 2: list-of-dicts (fallback for other configs)
     elif isinstance(entity_pages, list):
-        # Fallback, falls ein anderes TriviaQA-Config-Format mal eine Liste nutzt
         for page in entity_pages:
             if not isinstance(page, dict):
                 continue
-            title = page.get("title")
-            if title:
-                doc_titles.append(title)
-
+            t = page.get("title")
+            if t:
+                doc_titles.append(str(t))
             ctx = (
                 page.get("wiki_context")
                 or page.get("context")
                 or page.get("document")
             )
             if ctx:
-                evidence_texts.append(ctx)
+                contexts.append(str(ctx))
 
-    out["doc_titles"] = doc_titles or None
-    out["evidence_texts"] = evidence_texts or None
+    # Final scalar columns
+    out["doc_titles_json"] = (
+        json.dumps(doc_titles, ensure_ascii=False) if doc_titles else None
+    )
+    out["evidence_text"] = "\n\n".join(contexts) if contexts else None
 
     return out
 
