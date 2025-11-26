@@ -17,6 +17,15 @@ SHARD_PREFIX = "shard_"
 BATCH_SIZE = 512
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"  # GPU if available
 
+print("torch.cuda.is_available():", torch.cuda.is_available())
+print("Selected DEVICE:", DEVICE)
+if torch.cuda.is_available():
+    print("CUDA device count:", torch.cuda.device_count())
+    print("CUDA device name:", torch.cuda.get_device_name(0))
+else:
+    print("⚠ No CUDA device detected, running on CPU.")
+
+
 # Chunking parameters
 CHUNK_SIZE = 200  # number of tokens/words per chunk
 CHUNK_OVERLAP = 50  # number of tokens/words to overlap
@@ -97,6 +106,12 @@ def main():
         # 3. Load SentenceTransformer model on GPU
         model = SentenceTransformer(MODEL_NAME, device=DEVICE)
         print(f"Using device: {DEVICE}")
+        
+        try:
+            first_param_device = next(model.parameters()).device
+            print("First model parameter device:", first_param_device)
+        except Exception as e:
+            print("Could not inspect model parameters:", e)
         
         # 4. Compute embeddings in batches with GPU
         corpus_embeddings = []
