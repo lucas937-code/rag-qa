@@ -9,12 +9,13 @@ Design:
 - prepare_full_dataset(...) -> download full dataset and write splits to disk
 """
 
-from typing import Optional, Sequence, Dict
+from typing import Optional, Sequence, Dict, Any, List
 from pathlib import Path
 import logging
 
 import pandas as pd
 from datasets import load_dataset, Dataset, IterableDataset
+import json
 
 logger = logging.getLogger(__name__)
 
@@ -28,7 +29,7 @@ def _load_hf_split(
     subset: Optional[str],
     split: str,
     streaming: bool = False,
-) -> Dataset:
+) -> Dataset | IterableDataset:
     """
     Load a single split from Hugging Face Datasets.
 
@@ -56,9 +57,6 @@ def _load_hf_split(
         "Loaded HF split %s (%s, subset=%s, streaming=%s)",
         split, dataset_name, subset, streaming
     )
-
-    if type(ds) is not Dataset:
-        raise ValueError("Expected Dataset or IterableDataset from load_dataset")
     return ds
 
 
@@ -66,6 +64,8 @@ def _save_split_to_parquet(
     ds: Dataset,
     out_path: Path,
     max_examples: Optional[int] = None,
+    dataset_name: Optional[str] = None,
+    subset: Optional[str] = None,
 ) -> Path:
     """
     Save a (non-streaming) HF Dataset split to Parquet.
@@ -89,14 +89,15 @@ def _save_split_to_parquet(
     if max_examples is not None:
         ds = ds.select(range(min(max_examples, len(ds))))
 
-    rows = []
-    for item in ds:
-        if type(item) is not dict[object, object]:
-            continue
-        rows.append(_flatten_triviaqa_row(item))
-
-    df = pd.DataFrame(rows)
-
+    # Detect TriviaQA rc.wikipedia and flatten it to a Parquet-friendly schema.
+    if dataset_name == "trivia_qa" and (subset == "rc.wikipedia" or subset is None):
+        rows = []
+        for row in ds:
+            rows.append(_flatten_triviaqa_row(row))
+        df = pd.DataFrame(rows)
+    else:
+        # Fallback: directly convert to pandas for simpler datasets
+        df = ds.to_pandas()
 
     out_path.parent.mkdir(parents=True, exist_ok=True)
     df.to_parquet(out_path)
@@ -104,40 +105,100 @@ def _save_split_to_parquet(
     logger.info("Saved %d rows to %s", len(df), out_path)
     return out_path
 
-def _flatten_triviaqa_row(row: dict) -> dict:
+def _flatten_triviaqa_row(row: Dict[str, Any]) -> Dict[str, Any]:
     """
-    Extract and flatten the relevant fields from a TriviaQA row.
-    Removes nested structures that cannot be written to Parquet.
-    """
-    out = {}
+    Extract and flatten the relevant fields from a TriviaQA rc.wikipedia row.
 
-    # Basic identifiers
-    out["question_id"] = row.get("question_id") or row.get("question") or None
+    Resulting schema (per row):
+    - question_id: str
+    - question: str
+    - answer_aliases_json: str (JSON list) or None
+    - answer_normalized_json: str (JSON list) or None
+    - doc_titles_json: str (JSON list) or None
+    - evidence_text: str or None
+    """
+    out: Dict[str, Any] = {}
+
+    # Basic fields
+    out["question_id"] = row.get("question_id")
     out["question"] = row.get("question")
-    
-    # Acceptable answers (TriviaQA returns a dict: {'aliases': [...], 'normalized_aliases': [...]})
-    ans = row.get("answer", {})
-    if isinstance(ans, dict):
-        out["answer_aliases"] = ans.get("aliases")
-        out["answer_normalized"] = ans.get("normalized_aliases")
-    else:
-        out["answer_aliases"] = None
-        out["answer_normalized"] = None
 
-    # Evidence pages (hugely nested: list of pages, each page has search_results, doc_content, etc.)
-    # → extract only the raw text if available, otherwise skip
-    ev = row.get("entity_pages")
-    if isinstance(ev, list) and len(ev) > 0:
-        # Take first page as text source (common in many RAG baselines)
-        page = ev[0]
-        out["doc_title"] = page.get("title")
-        out["evidence_text"] = page.get("wiki_context", None)
-    else:
-        out["doc_title"] = None
-        out["evidence_text"] = None
+    # Answer (dict with 'aliases' and 'normalized_aliases')
+    ans = row.get("answer", {})
+    aliases: List[str] = []
+    norm_aliases: List[str] = []
+
+    if isinstance(ans, dict):
+        a = ans.get("aliases") or []
+        na = ans.get("normalized_aliases") or []
+        if isinstance(a, list):
+            aliases = [str(x) for x in a]
+        else:
+            aliases = [str(a)]
+        if isinstance(na, list):
+            norm_aliases = [str(x) for x in na]
+        else:
+            norm_aliases = [str(na)]
+
+    out["answer_aliases_json"] = (
+        json.dumps(aliases, ensure_ascii=False) if aliases else None
+    )
+    out["answer_normalized_json"] = (
+        json.dumps(norm_aliases, ensure_ascii=False) if norm_aliases else None
+    )
+
+    # Titles & contexts from entity_pages
+    doc_titles: List[str] = []
+    contexts: List[str] = []
+
+    entity_pages = row.get("entity_pages")
+
+    # Case 1: dict-of-lists (what your example shows)
+    if isinstance(entity_pages, dict):
+        titles = entity_pages.get("title") or []
+        wiki_contexts = (
+            entity_pages.get("wiki_context")
+            or entity_pages.get("context")
+            or entity_pages.get("document")
+            or []
+        )
+
+        if not isinstance(titles, list):
+            titles = [titles]
+        if not isinstance(wiki_contexts, list):
+            wiki_contexts = [wiki_contexts]
+
+        for t in titles:
+            if t:
+                doc_titles.append(str(t))
+
+        for ctx in wiki_contexts:
+            if ctx:
+                contexts.append(str(ctx))
+
+    # Case 2: list-of-dicts (fallback for other configs)
+    elif isinstance(entity_pages, list):
+        for page in entity_pages:
+            if not isinstance(page, dict):
+                continue
+            t = page.get("title")
+            if t:
+                doc_titles.append(str(t))
+            ctx = (
+                page.get("wiki_context")
+                or page.get("context")
+                or page.get("document")
+            )
+            if ctx:
+                contexts.append(str(ctx))
+
+    # Final scalar columns
+    out["doc_titles_json"] = (
+        json.dumps(doc_titles, ensure_ascii=False) if doc_titles else None
+    )
+    out["evidence_text"] = "\n\n".join(contexts) if contexts else None
 
     return out
-
 
 # =====================
 # Public API: local dev
@@ -202,13 +263,15 @@ def get_local_sample(
         ds_small = ds
 
     if as_pandas:
-        # HF Dataset.to_pandas() may in some versions return an iterator of DataFrames for large datasets;
-        # ensure we always return a concrete pandas.DataFrame to match the function's return type.
-        df = ds_small.to_pandas()
-        if not isinstance(df, pd.DataFrame):
-            # materialize iterator into a single DataFrame
-            df = pd.concat(list(df), ignore_index=True)
-        return df
+        # For TriviaQA rc.wikipedia, return the same flattened schema we use for Parquet
+        if dataset_name == "trivia_qa" and (subset == "rc.wikipedia" or subset is None):
+            rows = []
+            for row in ds_small:
+                rows.append(_flatten_triviaqa_row(row))
+            return pd.DataFrame(rows)
+        # Default: just convert to pandas
+        return ds_small.to_pandas()
+
     return ds_small
 
 
@@ -260,7 +323,13 @@ def prepare_full_dataset(
             max_examples = max_examples_per_split.get(split)
 
         out_file = base / f"{split}.parquet"
-        paths[split] = _save_split_to_parquet(ds, out_file, max_examples=max_examples)
+        paths[split] = _save_split_to_parquet(
+            ds,
+            out_file,
+            max_examples=max_examples,
+            dataset_name=dataset_name,
+            subset=subset,
+        )
 
     logger.info("Finished preparing splits: %s", paths)
     return paths
