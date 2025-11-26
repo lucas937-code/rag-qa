@@ -114,13 +114,29 @@ def main():
     # ------------------------------
     # Optional: test retrieval
     # ------------------------------
+
+    # we contain duplicates due to the nature of the dataset, many pages are repeated
+    # only print the number of unique passages
+    unique_passages = set(corpus)
+    print(f"Number of unique passages: {len(unique_passages)}")
+    # number of total passages
+    print(f"Number of total passages: {len(corpus)}")
+    # number of embeddings
+    print(f"Number of embeddings: {corpus_embeddings.shape[0]}")
+    
+    # number of dimensions
+    print(f"Embedding dimensions: {corpus_embeddings.shape[1]}")
+
+    print(f"{corpus_embeddings[:5]}")  # print first 5 embeddings
+
+
     model = SentenceTransformer(MODEL_NAME, device=DEVICE)
     from sklearn.metrics.pairwise import cosine_similarity
-    query = "What is the capital of france?"
+    query = "What is the top prize at the Cannes Film Festival?"
     query_embedding = model.encode([query], convert_to_numpy=True, device=DEVICE)
     sims = cosine_similarity(query_embedding, corpus_embeddings)
-    top_idx = np.argsort(-sims[0])[:5]
-    print("\nTop 5 passages:")
+    top_idx = np.argsort(-sims[0])[:3]
+    print("\nTop k passages:")
     for i in top_idx:
         print("-", corpus[i].replace("\n", " "))
         print("---")
