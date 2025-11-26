@@ -9,7 +9,7 @@ from transformers import AutoTokenizer, AutoModelForSeq2SeqLM
 # ------------------------------
 # Config
 # ------------------------------
-EMBEDDINGS_FILE = "corpus_embeddings.pkl"
+EMBEDDINGS_FILE = "corpus_embeddings_unique.pkl"
 EMBED_MODEL_NAME = "all-MiniLM-L6-v2"
 GEN_MODEL_NAME = "google/flan-t5-large"
 TOP_K = 3
