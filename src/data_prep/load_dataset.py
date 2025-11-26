@@ -9,7 +9,7 @@ Design:
 - prepare_full_dataset(...) -> download full dataset and write splits to disk
 """
 
-from typing import Optional, Sequence, Dict, Any, List
+from typing import Optional, Sequence, Dict, Any, List, cast
 from pathlib import Path
 import logging
 
@@ -21,7 +21,7 @@ logger = logging.getLogger(__name__)
 
 
 # =====================
-# Low-level helper
+# Low-level helpers
 # =====================
 
 def _load_hf_split(
@@ -57,7 +57,7 @@ def _load_hf_split(
         "Loaded HF split %s (%s, subset=%s, streaming=%s)",
         split, dataset_name, subset, streaming
     )
-    return ds
+    return cast(Dataset | IterableDataset, ds)
 
 
 def _save_split_to_parquet(
@@ -87,17 +87,17 @@ def _save_split_to_parquet(
         raise ValueError("Streaming dataset cannot be directly converted to Parquet")
 
     if max_examples is not None:
-        ds = ds.select(range(min(max_examples, len(ds))))
+        ds = cast(Dataset, ds.select(range(min(max_examples, len(ds)))))
 
     # Detect TriviaQA rc.wikipedia and flatten it to a Parquet-friendly schema.
     if dataset_name == "trivia_qa" and (subset == "rc.wikipedia" or subset is None):
         rows = []
         for row in ds:
-            rows.append(_flatten_triviaqa_row(row))
+            rows.append(_flatten_triviaqa_row(cast(Dict[str, Any], row)))
         df = pd.DataFrame(rows)
     else:
         # Fallback: directly convert to pandas for simpler datasets
-        df = ds.to_pandas()
+        df = cast(pd.DataFrame, ds.to_pandas())
 
     out_path.parent.mkdir(parents=True, exist_ok=True)
     df.to_parquet(out_path)
@@ -243,7 +243,7 @@ def get_local_sample(
     """
     ds = _load_hf_split(dataset_name, subset, split, streaming=streaming)
 
-    # Streaming-Mode: wir iterieren einfach ein wenig und bauen einen kleinen DF
+    # Streaming mode: iterate through a few examples and build a small DataFrame
     if streaming:
         logger.info(
             "Using streaming mode for local sample (max_examples=%d)", max_examples
@@ -256,21 +256,22 @@ def get_local_sample(
         df = pd.DataFrame(rows)
         return df if as_pandas else ds
 
-    # Nicht-streaming: komplette HF Dataset-Instanz, aber wir schneiden es auf max_examples zu
+    # Non-streaming: ds is guaranteed to be a Dataset (not IterableDataset) here
+    ds_non_streaming = cast(Dataset, ds)
     if max_examples is not None:
-        ds_small = ds.select(range(min(max_examples, len(ds))))
+        ds_small = ds_non_streaming.select(range(min(max_examples, len(ds_non_streaming))))
     else:
-        ds_small = ds
+        ds_small = ds_non_streaming
 
     if as_pandas:
         # For TriviaQA rc.wikipedia, return the same flattened schema we use for Parquet
         if dataset_name == "trivia_qa" and (subset == "rc.wikipedia" or subset is None):
             rows = []
             for row in ds_small:
-                rows.append(_flatten_triviaqa_row(row))
+                rows.append(_flatten_triviaqa_row(cast(Dict[str, Any], row)))
             return pd.DataFrame(rows)
         # Default: just convert to pandas
-        return ds_small.to_pandas()
+        return cast(pd.DataFrame, ds_small.to_pandas())
 
     return ds_small
 
@@ -316,7 +317,7 @@ def prepare_full_dataset(
 
     for split in splits:
         logger.info("Preparing split '%s'...", split)
-        ds = _load_hf_split(dataset_name, subset, split, streaming=False)
+        ds = cast(Dataset, _load_hf_split(dataset_name, subset, split, streaming=False))
 
         max_examples = None
         if max_examples_per_split is not None:
