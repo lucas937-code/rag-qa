@@ -107,8 +107,6 @@ def _save_split_to_parquet(
 def _flatten_triviaqa_row(row: Dict[str, Any]) -> Dict[str, Any]:
     """
     Extract and flatten the relevant fields from a TriviaQA row (rc.wikipedia).
-    This removes deeply nested structures that cannot be written to Parquet
-    and keeps only what we need for our RAG pipeline.
 
     Resulting schema (per row):
     - question_id: str
@@ -124,7 +122,7 @@ def _flatten_triviaqa_row(row: Dict[str, Any]) -> Dict[str, Any]:
     out["question_id"] = row.get("question_id")
     out["question"] = row.get("question")
 
-    # Answer (may be a dict with 'aliases' and 'normalized_aliases')
+    # Answer (dict with 'aliases' and 'normalized_aliases')
     ans = row.get("answer", {})
     if isinstance(ans, dict):
         out["answer_aliases"] = ans.get("aliases")
@@ -133,12 +131,41 @@ def _flatten_triviaqa_row(row: Dict[str, Any]) -> Dict[str, Any]:
         out["answer_aliases"] = None
         out["answer_normalized"] = None
 
-    # Evidence from entity_pages: collect titles and wiki_context texts
+    # Evidence: TriviaQA rc.wikipedia uses a *columnar dict* for entity_pages:
+    # {
+    #   "title": [...],
+    #   "wiki_context": [...],
+    #   ...
+    # }
     doc_titles: List[str] = []
     evidence_texts: List[str] = []
 
-    entity_pages = row.get("entity_pages", [])
-    if isinstance(entity_pages, list):
+    entity_pages = row.get("entity_pages")
+
+    if isinstance(entity_pages, dict):
+        titles = entity_pages.get("title") or []
+        contexts = (
+            entity_pages.get("wiki_context")
+            or entity_pages.get("context")
+            or entity_pages.get("document")
+            or []
+        )
+
+        # ensure list-ness
+        if isinstance(titles, str):
+            titles = [titles]
+        if isinstance(contexts, str):
+            contexts = [contexts]
+
+        # lengths können sich unterscheiden; zip nimmt die sichere Schnittmenge
+        for t, ctx in zip(titles, contexts):
+            if t:
+                doc_titles.append(t)
+            if ctx:
+                evidence_texts.append(ctx)
+
+    elif isinstance(entity_pages, list):
+        # Fallback, falls ein anderes TriviaQA-Config-Format mal eine Liste nutzt
         for page in entity_pages:
             if not isinstance(page, dict):
                 continue
@@ -146,7 +173,6 @@ def _flatten_triviaqa_row(row: Dict[str, Any]) -> Dict[str, Any]:
             if title:
                 doc_titles.append(title)
 
-            # TriviaQA rc.wikipedia typically uses 'wiki_context' as the text field
             ctx = (
                 page.get("wiki_context")
                 or page.get("context")
