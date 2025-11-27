@@ -1,0 +1,73 @@
+import os
+import pickle
+import numpy as np
+from sklearn.metrics.pairwise import cosine_similarity
+from sentence_transformers import SentenceTransformer
+import torch
+
+# ============================================
+# CONFIG
+# ============================================
+BASE_DIR = os.path.dirname(os.path.dirname(os.path.dirname(__file__)))
+
+EMBEDDINGS_FILE = os.path.join(
+    BASE_DIR,
+    "data",
+    "processed",
+    "embeddings",
+    "corpus_embeddings_unique.pkl"
+)
+
+EMBED_MODEL_NAME = "all-MiniLM-L6-v2"
+TOP_K = 5
+DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
+
+# ============================================
+# LOAD EMBEDDINGS
+# ============================================
+def load_corpus_embeddings():
+    with open(EMBEDDINGS_FILE, "rb") as f:
+        data = pickle.load(f)
+        return data["passages"], data["embeddings"]
+
+# ============================================
+# RETRIEVAL
+# ============================================
+def retrieve(query, corpus, corpus_embeddings, embed_model, top_k=TOP_K):
+    query_emb = embed_model.encode([query], convert_to_numpy=True)
+    sims = cosine_similarity(query_emb, corpus_embeddings)
+    top_idx = np.argsort(-sims[0])[:top_k]
+
+    results = []
+    for idx in top_idx:
+        results.append({
+            "rank": len(results) + 1,
+            "index": idx,
+            "passage": corpus[idx],
+            "score": float(sims[0][idx])
+        })
+
+    return results
+
+# ============================================
+# MANUAL TEST
+# ============================================
+if __name__ == "__main__":
+    print("\nLoading corpus embeddings from:")
+    print(EMBEDDINGS_FILE)
+
+    corpus, corpus_embeddings = load_corpus_embeddings()
+
+    print("\nLoading embedding model...")
+    embed_model = SentenceTransformer(EMBED_MODEL_NAME, device=DEVICE)
+
+    query = "Who discovered penicillin?"
+    print(f"\nQuery: {query}\n")
+
+    results = retrieve(query, corpus, corpus_embeddings, embed_model, top_k=TOP_K)
+
+    print("\n===== RETRIEVAL RESULTS =====\n")
+    for r in results:
+        print(f"[Rank {r['rank']}]  Score: {r['score']:.4f}  (Index {r['index']})")
+        print(r["passage"])
+        print("-" * 80)
