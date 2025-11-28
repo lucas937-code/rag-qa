@@ -5,7 +5,7 @@ import numpy as np
 from pathlib import Path
 from sklearn.metrics.pairwise import cosine_similarity
 from sentence_transformers import SentenceTransformer
-from transformers import AutoTokenizer, AutoModelForSeq2SeqLM
+from transformers import AutoTokenizer, AutoModelForCausalLM
 
 # ==============================
 # Config
@@ -52,9 +52,14 @@ def get_embedder():
 def get_generator():
     global _gen_model, _tokenizer
     if _gen_model is None:
-        print("🔹 Loading FLAN-T5 model...")
-        _tokenizer = AutoTokenizer.from_pretrained(GEN_MODEL_NAME)
-        _gen_model = AutoModelForSeq2SeqLM.from_pretrained(GEN_MODEL_NAME).to(DEVICE)
+        print("🔹 Loading Llama-3.1-8B-Instruct...")
+        _tokenizer = AutoTokenizer.from_pretrained(GEN_MODEL_NAME, use_fast=True)
+        _tokenizer.pad_token = _tokenizer.eos_token  # Llama has no pad token
+        _gen_model = AutoModelForCausalLM.from_pretrained(
+            GEN_MODEL_NAME,
+            torch_dtype=torch.float16 if DEVICE == "cuda" else torch.float32,
+            device_map="auto" if DEVICE == "cuda" else None,
+        )
         _gen_model.eval()
     return _tokenizer, _gen_model
 
@@ -76,29 +81,33 @@ def retrieve_top_k(query, corpus, embeddings, k=TOP_K):
 # ==============================
 def generate_answer_combined(query, corpus, embeddings, top_k=5):
     tokenizer, model = get_generator()
-
-    # --- retrieve top k passages ---
-    embed_model = get_embedder()
-    q_emb = embed_model.encode([query], convert_to_numpy=True)
-    sims = cosine_similarity(q_emb, embeddings)[0]
-
-    idx = np.argsort(-sims)[:top_k]
-    top_passages = [corpus[i] for i in idx]
-
-    # --- merge chunks into one prompt ---
+    if tokenizer is None or model is None:
+        raise RuntimeError("Generator model or tokenizer not loaded.")
+    top_passages, _ = retrieve_top_k(query, corpus, embeddings, k=top_k)
     context_block = "\n---\n".join(top_passages)
 
     prompt = (
-        f"You are a factual assistant. Answer using ONLY the information below.\n\n"
+        "You are a factual assistant. Answer only with information from the context.\n"
         f"Context:\n{context_block}\n\n"
         f"Question: {query}\nAnswer:"
     )
 
-    inputs = tokenizer(prompt, return_tensors="pt",
-                       truncation=True, max_length=MAX_INPUT_LENGTH).to(DEVICE)
+    inputs = tokenizer(
+        prompt,
+        return_tensors="pt",
+        truncation=True,
+        max_length=MAX_INPUT_LENGTH,
+        padding=True,
+    ).to(model.device)
 
     with torch.no_grad():
-        output = model.generate(**inputs, max_new_tokens=MAX_GEN_TOKENS)
+        output = model.generate(
+            **inputs,
+            max_new_tokens=MAX_GEN_TOKENS,
+            do_sample=False,       # or True + temperature for diversity
+            eos_token_id=tokenizer.eos_token_id,
+            pad_token_id=tokenizer.pad_token_id,
+        )
 
     answer = tokenizer.decode(output[0], skip_special_tokens=True).strip()
     return answer, top_passages
