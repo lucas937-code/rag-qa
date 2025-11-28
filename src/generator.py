@@ -12,11 +12,11 @@ from transformers import AutoTokenizer, AutoModelForCausalLM
 # ==============================
 EMBEDDINGS_FILE = Path("corpus_embeddings_unique.pkl")
 EMBED_MODEL_NAME = "all-MiniLM-L6-v2"
-GEN_MODEL_NAME = "google/flan-t5-large"
+GEN_MODEL_NAME = "meta-llama/Meta-Llama-3.1-8B-Instruct"
 TOP_K = 3
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 MAX_GEN_TOKENS = 128
-MAX_INPUT_LENGTH = 512
+MAX_INPUT_LENGTH = 2048
 
 
 # ==============================
