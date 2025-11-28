@@ -8,3 +8,6 @@ indexes/
 
 *.npy
 loading data/corpus_embeddings.pkl
+
+__pycache__/
+*.pyc
