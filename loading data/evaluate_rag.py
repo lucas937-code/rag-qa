@@ -17,16 +17,14 @@ from tqdm import tqdm
 # ------------------------------ CONFIG ------------------------------ #
 TEST_DATA = "../test_dataset"
 SHARD_PREFIX = "shard_"
-MAX_QUESTIONS = 1000
+MAX_QUESTIONS = 100
 
 EMBEDDINGS_FILE = "corpus_embeddings_unique.pkl"
 EMBED_MODEL = "all-MiniLM-L6-v2"
 GEN_MODEL = "google/flan-t5-large"
 
-TOP_K = 5
+TOP_K = 3
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
-MAX_INPUT_LEN = 512
-MAX_GEN_TOKENS = 128
 
 SAVE_FILE = "rag_eval_output.jsonl"
 
@@ -51,10 +49,11 @@ def generate(query, retrieved, tokenizer, gen_model):
     context_str = "\n\n".join(retrieved)
     prompt = f"Answer the question using the context.\nContext:\n{context_str}\n\nQuestion: {query}\nAnswer:"
 
-    inputs = tokenizer(prompt, return_tensors="pt", truncation=True, max_length=MAX_INPUT_LEN).to(DEVICE)
+    inputs = tokenizer(prompt, return_tensors="pt").to(DEVICE)
 
     with torch.no_grad():
-        output = gen_model.generate(**inputs, max_new_tokens=MAX_GEN_TOKENS)
+        # remove max_new_tokens to allow unrestricted generation
+        output = gen_model.generate(**inputs)
 
     return tokenizer.decode(output[0], skip_special_tokens=True).strip()
 
@@ -83,7 +82,7 @@ def main():
     print("\n=== Loading Test Data (100 questions) ===")
     test = load_test_100()
 
-    out = open(SAVE_FILE, "w")
+    # out = open(SAVE_FILE, "w")
 
     em_results = []
     contains_results = []
@@ -103,17 +102,20 @@ def main():
         em_results.append(em)
         contains_results.append(contains)
 
-        out.write(json.dumps({
-            "question": q,
-            "gold_answer": gold,
-            "aliases_used": aliases,
-            "predicted": pred,
-            "retrieved_passages": retrieved,
-            "exact_match": em,
-            "contains_match": contains
-        }) + "\n")
+        # truncate retreived messages to len=200
+        truncated_retrieved_messages = [r[:200] for r in retrieved]
 
-    out.close()
+    #     out.write(json.dumps({
+    #         "question": q,
+    #         "gold_answer": gold,
+    #         "aliases_used": aliases,
+    #         "predicted": pred,
+    #         "exact_match": em,
+    #         "contains_match": contains,
+    #         "retrieved_passages": truncated_retrieved_messages
+    #     }) + "\n")
+
+    # out.close()
 
     print("\n==================== Final Metrics ====================")
     print(f"Exact Match Accuracy:       {np.mean(em_results):.4f}")
