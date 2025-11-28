@@ -67,15 +67,15 @@ def extract_passages(dataset):
 # ------------------------------
 # Compute embeddings (with file existence check)
 # ------------------------------
-def compute_embeddings(force_recompute=False):
+def compute_embeddings(embeddings_file=EMBEDDINGS_FILE, force_recompute=False):
     """
     Computes embeddings or loads them if EMBEDDINGS_FILE exists.
     Set force_recompute=True to overwrite existing embeddings.
     Returns: corpus (list of passages), corpus_embeddings (numpy array)
     """
-    if os.path.exists(EMBEDDINGS_FILE) and not force_recompute:
-        print(f"Loading saved embeddings from {EMBEDDINGS_FILE}...")
-        with open(EMBEDDINGS_FILE, "rb") as f:
+    if os.path.exists(embeddings_file) and not force_recompute:
+        print(f"Loading saved embeddings from {embeddings_file}...")
+        with open(embeddings_file, "rb") as f:
             data = pickle.load(f)
             corpus_embeddings = data["embeddings"]
             corpus = data["passages"]
