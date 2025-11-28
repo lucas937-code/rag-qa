@@ -28,11 +28,11 @@ DEV_LIMIT = 1000   # number of samples used per split for evaluation
 # ======================================================
 # Load embeddings
 # ======================================================
-def load_embeddings():
-    if not EMBEDDINGS_FILE.exists():
-        raise FileNotFoundError(f"❌ Cannot find embeddings → {EMBEDDINGS_FILE}")
+def load_embeddings(embeddings_file=EMBEDDINGS_FILE):
+    if not embeddings_file.exists():
+        raise FileNotFoundError(f"❌ Cannot find embeddings → {embeddings_file}")
 
-    with open(EMBEDDINGS_FILE, "rb") as f:
+    with open(embeddings_file, "rb") as f:
         data = pickle.load(f)
 
     corpus = data["passages"]
@@ -90,8 +90,8 @@ def evaluate_recall(model, corpus, embeddings, dataset, top_k_values):
 # ======================================================
 # ORCHESTRATION FUNCTION
 # ======================================================
-def run_evaluation():
-    corpus, emb = load_embeddings()
+def run_evaluation(embeddings_file=EMBEDDINGS_FILE):
+    corpus, emb = load_embeddings(embeddings_file=embeddings_file)
     model = SentenceTransformer("all-MiniLM-L6-v2", device=DEVICE)
 
     for name, path in DATA_DIRS.items():
