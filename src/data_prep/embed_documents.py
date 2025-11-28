@@ -10,7 +10,7 @@ import json
 
 MODEL_NAME = "all-MiniLM-L6-v2"  # or "sentence-transformers/all-MiniLM-L6-v2"
 BATCH_SIZE = 512
-EMBEDDINGS_FILE = "corpus_embeddings_unique.pkl"
+EMBEDDINGS_FILE = "corpus_embeddings_uniqued.pkl"
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 
 
