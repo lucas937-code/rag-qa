@@ -81,12 +81,12 @@ def contains_match(pred, gold_aliases):
 
 
 # =============================== MAIN =============================== #
-def run_full_rag_eval():
+def run_full_rag_eval(embeddings_file=EMBEDDINGS_FILE):
     print("\n=== Loading embeddings ===")
-    if not EMBEDDINGS_FILE.exists():
+    if not embeddings_file.exists():
         raise FileNotFoundError("❌ Embedding file missing. Compute embeddings first.")
 
-    data = pickle.load(open(EMBEDDINGS_FILE, "rb"))
+    data = pickle.load(open(embeddings_file, "rb"))
     corpus, corpus_emb = data["passages"], data["embeddings"]
 
     embed_model = SentenceTransformer(EMBED_MODEL_NAME, device=DEVICE)

@@ -113,9 +113,9 @@ def compute_embeddings(embeddings_file=EMBEDDINGS_FILE, force_recompute=False):
     corpus_embeddings = np.vstack(corpus_embeddings)
 
     # 6. Save embeddings
-    with open(EMBEDDINGS_FILE, "wb") as f:
+    with open(embeddings_file, "wb") as f:
         pickle.dump({"passages": corpus, "embeddings": corpus_embeddings}, f)
-    print(f"Saved embeddings to {EMBEDDINGS_FILE}")
+    print(f"Saved embeddings to {embeddings_file}")
 
     return corpus, corpus_embeddings
 
