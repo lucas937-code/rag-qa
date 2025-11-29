@@ -2,6 +2,7 @@
 
 *.npy
 *.pkl
+*.index
 
 data/
 
