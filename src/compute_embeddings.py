@@ -17,9 +17,9 @@ SHARD_PREFIX = "shard_"
 BATCH_SIZE = 512
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 
-# Chunking parameters
-CHUNK_SIZE = 512
-CHUNK_OVERLAP = 128
+# Chunking parameters (token-based; MiniLM has a ~256 token limit)
+CHUNK_TOKENS = 240
+CHUNK_OVERLAP = 60
 
 # ------------------------------
 # Helper: Load all shards
@@ -37,21 +37,27 @@ def load_all_shards(data_dir=TRAIN_DIR):
 # ------------------------------
 # Helper: Chunk passages
 # ------------------------------
-def chunk_passage(title, text, chunk_size=CHUNK_SIZE, overlap=CHUNK_OVERLAP):
-    words = text.split()
+def chunk_passage(title, text, tokenizer, chunk_tokens=CHUNK_TOKENS, overlap=CHUNK_OVERLAP):
+    """
+    Token-based chunking to avoid encoder truncation. Keeps simple overlaps.
+    """
+    # Tokenize with truncation disabled to get full sequence of ids
+    tokens = tokenizer.encode(text, add_special_tokens=False)
     chunks = []
     start = 0
-    while start < len(words):
-        end = start + chunk_size
-        chunk_text = " ".join(words[start:end])
+    while start < len(tokens):
+        end = start + chunk_tokens
+        token_slice = tokens[start:end]
+        chunk_text = tokenizer.decode(token_slice, skip_special_tokens=True).strip()
         chunks.append(f"{title}: {chunk_text}")
-        start += chunk_size - overlap
+        # Move window with overlap
+        start += max(1, chunk_tokens - overlap)
     return chunks
 
 # ------------------------------
 # Helper: Extract passages from dataset
 # ------------------------------
-def extract_passages(dataset):
+def extract_passages(dataset, tokenizer):
     passages = []
     for example in tqdm(dataset, desc="Extracting passages"):
         entity_pages = example.get("entity_pages", {})
@@ -61,7 +67,7 @@ def extract_passages(dataset):
         for i in range(n_pages):
             title = titles[i] or "No Title"
             text = wiki_contexts[i]
-            passages.extend(chunk_passage(title, text))
+            passages.extend(chunk_passage(title, text, tokenizer))
     return passages
 
 # ------------------------------
@@ -91,18 +97,19 @@ def compute_embeddings(embeddings_file=EMBEDDINGS_FILE, force_recompute=False):
         return None, None
     print(f"Loaded dataset with {len(dataset)} examples.")
 
-    # 2. Extract passages
-    corpus = extract_passages(dataset)
+    # 2. Load model (also needed for tokenizer)
+    model = SentenceTransformer(MODEL_NAME, device=DEVICE)
+    tokenizer = model.tokenizer
+    print(f"Using device: {DEVICE}")
+
+    # 3. Extract passages (token-based chunking)
+    corpus = extract_passages(dataset, tokenizer)
     
-    # 3. Remove duplicates
+    # 4. Remove duplicates
     before = len(corpus)
     corpus = list(dict.fromkeys(corpus))
     after = len(corpus)
     print(f"Removed {before-after} duplicate passages ({after} unique).")
-
-    # 4. Load model
-    model = SentenceTransformer(MODEL_NAME, device=DEVICE)
-    print(f"Using device: {DEVICE}")
 
     # 5. Compute embeddings in batches
     corpus_embeddings = []
