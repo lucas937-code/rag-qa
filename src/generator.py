@@ -4,7 +4,7 @@ import torch
 import numpy as np
 from pathlib import Path
 from sklearn.metrics.pairwise import cosine_similarity
-from sentence_transformers import SentenceTransformer
+from sentence_transformers import SentenceTransformer, CrossEncoder
 from transformers import AutoTokenizer, AutoModelForCausalLM
 from src.config import Config, DEFAULT_CONFIG
 
@@ -23,6 +23,8 @@ TOP_K = 3
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 MAX_GEN_TOKENS = 128
 MAX_INPUT_LENGTH = 2048
+RERANK_MODEL_NAME = "cross-encoder/ms-marco-MiniLM-L-6-v2"
+FAISS_CANDIDATES = 50
 
 
 # ==============================
@@ -55,17 +57,20 @@ def load_embeddings(config: Config = DEFAULT_CONFIG):
 # Init models (lazy-loaded)
 # ==============================
 _embed_model = None
+_embed_model_name = None
 _gen_model = None
 _tokenizer = None
 _faiss_index = None
 _faiss_passages = None
+_reranker = None
 
 
 def get_embedder(model_name):
-    global _embed_model
-    if _embed_model is None:
-        print("🔹 Loading embedding model...")
+    global _embed_model, _embed_model_name
+    if _embed_model is None or _embed_model_name != model_name:
+        print(f"🔹 Loading embedding model {model_name}...")
         _embed_model = SentenceTransformer(model_name, device=DEVICE)
+        _embed_model_name = model_name
     return _embed_model
 
 
@@ -86,6 +91,14 @@ def get_generator():
     return _tokenizer, _gen_model
 
 
+def get_reranker():
+    global _reranker
+    if _reranker is None:
+        print("🔹 Loading cross-encoder reranker...")
+        _reranker = CrossEncoder(RERANK_MODEL_NAME, device=DEVICE)
+    return _reranker
+
+
 # ==============================
 # Retrieve passages
 # ==============================
@@ -98,8 +111,15 @@ def retrieve_top_k(query, corpus, embeddings, model_name, k=TOP_K):
     norm = np.linalg.norm(q_emb, axis=1, keepdims=True)
     norm[norm == 0] = 1e-10
     q_norm = (q_emb / norm).astype(np.float32)
-    scores, idx = _faiss_index.search(q_norm, k)
-    return [corpus[i] for i in idx[0]], scores[0]
+    scores, idx = _faiss_index.search(q_norm, FAISS_CANDIDATES)
+    candidates_idx = idx[0]
+
+    reranker = get_reranker()
+    pairs = [(query, corpus[i]) for i in candidates_idx]
+    rerank_scores = reranker.predict(pairs)
+    order = np.argsort(-rerank_scores)
+    top_idx = candidates_idx[order][:k]
+    return [corpus[i] for i in top_idx], rerank_scores[order][:k]
 
 
 # ==============================

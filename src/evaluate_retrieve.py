@@ -5,7 +5,7 @@ import numpy as np
 from pathlib import Path
 from tqdm import tqdm
 from datasets import load_from_disk, concatenate_datasets
-from sentence_transformers import SentenceTransformer
+from sentence_transformers import SentenceTransformer, CrossEncoder
 from sklearn.metrics.pairwise import cosine_similarity
 from src.config import Config, DEFAULT_CONFIG
 
@@ -24,6 +24,8 @@ SHARD_PREFIX = "shard_"
 TOP_K_VALUES = [1, 3, 5, 7, 10]
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 DEV_LIMIT = 1000   # number of samples used per split for evaluation
+FAISS_CANDIDATES = 50  # number of initial candidates pulled from FAISS
+RERANK_MODEL_NAME = "cross-encoder/ms-marco-MiniLM-L-6-v2"
 
 
 # ======================================================
@@ -69,8 +71,9 @@ def load_all_shards(base_dir):
 # ======================================================
 # Compute Recall@K
 # ======================================================
-def evaluate_recall(model, corpus, embeddings, dataset, top_k_values, faiss_index=None):
+def evaluate_recall(model, corpus, embeddings, dataset, top_k_values, faiss_index=None, reranker=None):
     recalls = {k: [] for k in top_k_values}
+    top_candidates = max(FAISS_CANDIDATES, max(top_k_values))
 
     for ex in tqdm(dataset, desc="Evaluating Recall"):
         question = ex["question"]
@@ -83,8 +86,16 @@ def evaluate_recall(model, corpus, embeddings, dataset, top_k_values, faiss_inde
         norm = np.linalg.norm(q_emb, axis=1, keepdims=True)
         norm[norm == 0] = 1e-10
         q_norm = (q_emb / norm).astype(np.float32)
-        _, idx = faiss_index.search(q_norm, max(top_k_values))
-        sorted_idx = idx[0]
+        _, idx = faiss_index.search(q_norm, top_candidates)
+        candidates_idx = idx[0]
+
+        if reranker is not None:
+            pairs = [(question, corpus[i]) for i in candidates_idx]
+            scores = reranker.predict(pairs)
+            order = np.argsort(-scores)
+            sorted_idx = candidates_idx[order]
+        else:
+            sorted_idx = candidates_idx
 
         # Evaluate Recall@K
         for k in top_k_values:
@@ -106,12 +117,13 @@ def run_evaluation(config: Config = DEFAULT_CONFIG):
     }
     corpus, emb, faiss_index = load_embeddings(config)
     model = SentenceTransformer(config.EMBEDDING_MODEL, device=DEVICE)
+    reranker = CrossEncoder(RERANK_MODEL_NAME, device=DEVICE)
 
     for name, path in DATA_DIRS.items():
         print(f"\n=== 🔥 Evaluating {name.upper()} — first {DEV_LIMIT} samples ===")
         dataset = load_all_shards(path)
 
-        results = evaluate_recall(model, corpus, emb, dataset, TOP_K_VALUES, faiss_index)
+        results = evaluate_recall(model, corpus, emb, dataset, TOP_K_VALUES, faiss_index, reranker)
         for k, score in results.items():
             print(f"Recall@{k}: {score:.4f}")
 
