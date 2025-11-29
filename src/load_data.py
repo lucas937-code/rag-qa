@@ -1,6 +1,6 @@
 from datasets import load_dataset, Dataset, DownloadConfig
 import os
-from config import Config, DEFAULT_CONFIG
+from src.config import Config, DEFAULT_CONFIG
 
 VAL_SPLIT_SIZE = 7900
 BATCH_SIZE = 1000

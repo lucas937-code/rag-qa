@@ -6,7 +6,7 @@ from pathlib import Path
 from sklearn.metrics.pairwise import cosine_similarity
 from sentence_transformers import SentenceTransformer
 from transformers import AutoTokenizer, AutoModelForCausalLM
-from config import Config, DEFAULT_CONFIG
+from src.config import Config, DEFAULT_CONFIG
 
 # Optional FAISS import
 try:

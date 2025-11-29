@@ -13,7 +13,7 @@ from datasets import load_from_disk, concatenate_datasets
 from sentence_transformers import SentenceTransformer
 from transformers import AutoTokenizer, AutoModelForCausalLM
 from tqdm import tqdm
-from config import Config, DEFAULT_CONFIG
+from src.config import Config, DEFAULT_CONFIG
 
 # Optional FAISS import
 try:
