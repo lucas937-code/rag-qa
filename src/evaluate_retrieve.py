@@ -105,7 +105,7 @@ def run_evaluation(config: Config = DEFAULT_CONFIG):
         "test": config.TEST_DIR
     }
     corpus, emb, faiss_index = load_embeddings(config)
-    model = SentenceTransformer("all-MiniLM-L6-v2", device=DEVICE)
+    model = SentenceTransformer(config.EMBEDDING_MODEL, device=DEVICE)
 
     for name, path in DATA_DIRS.items():
         print(f"\n=== 🔥 Evaluating {name.upper()} — first {DEV_LIMIT} samples ===")
