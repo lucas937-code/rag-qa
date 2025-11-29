@@ -6,7 +6,7 @@ import torch
 from datasets import load_from_disk, concatenate_datasets
 from sentence_transformers import SentenceTransformer
 from sklearn.metrics.pairwise import cosine_similarity
-from config.paths import TRAIN_DIR, VAL_DIR, TEST_DIR
+from config import Config, DEFAULT_CONFIG
 
 # Optional FAISS import
 try:
@@ -18,11 +18,6 @@ except ImportError:
 # ------------------------------
 # Config
 # ------------------------------
-EMBEDDINGS_FILE = os.path.join(os.path.dirname(__file__), "..", "corpus_embeddings_unique.pkl")
-FAISS_INDEX_FILE = os.path.join(os.path.dirname(__file__), "..", "corpus_faiss.index")
-PASSAGES_FILE = os.path.join(os.path.dirname(__file__), "..", "corpus_passages.pkl")
-MODEL_NAME = "all-MiniLM-L6-v2"
-SHARD_PREFIX = "shard_"
 BATCH_SIZE = 512
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 
@@ -35,13 +30,13 @@ CHUNK_OVERLAP = 60
 # ------------------------------
 def load_all_shards(data_dirs=None):
     if data_dirs is None:
-        data_dirs = [TRAIN_DIR]
+        data_dirs = [DEFAULT_CONFIG.TRAIN_DIR, DEFAULT_CONFIG.VAL_DIR, DEFAULT_CONFIG.TEST_DIR]
 
     datasets = []
     for data_dir in data_dirs:
         if not os.path.isdir(data_dir):
             continue
-        shards = [os.path.join(data_dir, d) for d in os.listdir(data_dir) if d.startswith(SHARD_PREFIX)]
+        shards = [os.path.join(data_dir, d) for d in os.listdir(data_dir) if d.startswith(DEFAULT_CONFIG.SHARD_PREFIX)]
         shards = sorted(shards)
         for shard in tqdm(shards, desc=f"Loading shards from {data_dir}"):
             datasets.append(load_from_disk(shard))
@@ -89,15 +84,15 @@ def extract_passages(dataset, tokenizer):
 # ------------------------------
 # Compute embeddings (with file existence check)
 # ------------------------------
-def compute_embeddings(embeddings_file=EMBEDDINGS_FILE, force_recompute=False):
+def compute_embeddings(config: Config, force_recompute=False):
     """
     Computes embeddings or loads them if EMBEDDINGS_FILE exists.
     Set force_recompute=True to overwrite existing embeddings.
     Returns: corpus (list of passages), corpus_embeddings (numpy array)
     """
-    if os.path.exists(embeddings_file) and not force_recompute:
-        print(f"Loading saved embeddings from {embeddings_file}...")
-        with open(embeddings_file, "rb") as f:
+    if os.path.exists(config.EMBEDDINGS_FILE) and not force_recompute:
+        print(f"Loading saved embeddings from {config.EMBEDDINGS_FILE}...")
+        with open(config.EMBEDDINGS_FILE, "rb") as f:
             data = pickle.load(f)
             corpus_embeddings = data["embeddings"]
             corpus = data["passages"]
@@ -107,14 +102,14 @@ def compute_embeddings(embeddings_file=EMBEDDINGS_FILE, force_recompute=False):
     print("Embeddings not found or force_recompute=True, computing embeddings...")
 
     # 1. Load dataset
-    dataset = load_all_shards([TRAIN_DIR, VAL_DIR, TEST_DIR])
+    dataset = load_all_shards([config.TRAIN_DIR, config.VAL_DIR, config.TEST_DIR])
     if dataset is None:
         print("No shards found! Make sure TRAIN/VAL/TEST dirs have shards.")
         return None, None
     print(f"Loaded dataset with {len(dataset)} examples.")
 
     # 2. Load model (also needed for tokenizer)
-    model = SentenceTransformer(MODEL_NAME, device=DEVICE)
+    model = SentenceTransformer(config.EMBEDDING_MODEL, device=DEVICE)
     tokenizer = model.tokenizer
     print(f"Using device: {DEVICE}")
 
@@ -136,14 +131,14 @@ def compute_embeddings(embeddings_file=EMBEDDINGS_FILE, force_recompute=False):
     corpus_embeddings = np.vstack(corpus_embeddings)
 
     # 6. Save embeddings (pickle) for backward compatibility
-    with open(embeddings_file, "wb") as f:
+    with open(config.EMBEDDINGS_FILE, "wb") as f:
         pickle.dump({"passages": corpus, "embeddings": corpus_embeddings}, f)
-    print(f"Saved embeddings to {embeddings_file}")
+    print(f"Saved embeddings to {config.EMBEDDINGS_FILE}")
 
     # 7. Save passages separately (FAISS uses its own binary)
-    with open(PASSAGES_FILE, "wb") as f:
+    with open(config.PASSAGES_FILE, "wb") as f:
         pickle.dump({"passages": corpus}, f)
-    print(f"Saved passages to {PASSAGES_FILE}")
+    print(f"Saved passages to {config.PASSAGES_FILE}")
 
     # 8. Build FAISS index (inner product on L2-normalized vectors)
     if FAISS_AVAILABLE:
@@ -151,10 +146,10 @@ def compute_embeddings(embeddings_file=EMBEDDINGS_FILE, force_recompute=False):
         norms[norms == 0] = 1e-10
         emb_normalized = corpus_embeddings / norms
         dim = emb_normalized.shape[1]
-        index = faiss.IndexFlatIP(dim)
+        index = faiss.IndexFlatIP(dim) # type: ignore
         index.add(emb_normalized.astype(np.float32))
-        faiss.write_index(index, FAISS_INDEX_FILE)
-        print(f"Saved FAISS index to {FAISS_INDEX_FILE} (dim={dim}, n={len(corpus)})")
+        faiss.write_index(index, config.FAISS_INDEX_FILE) # type: ignore
+        print(f"Saved FAISS index to {config.FAISS_INDEX_FILE} (dim={dim}, n={len(corpus)})")
     else:
         print("⚠ FAISS not installed. Install faiss-cpu to enable fast retrieval.")
 
@@ -163,11 +158,11 @@ def compute_embeddings(embeddings_file=EMBEDDINGS_FILE, force_recompute=False):
 # ------------------------------
 # Retrieval function
 # ------------------------------
-def retrieve_top_k(query, corpus, corpus_embeddings, model_name=MODEL_NAME, device=DEVICE, top_k=3):
+def retrieve_top_k(query, corpus, corpus_embeddings, config: Config, device=DEVICE, top_k=3):
     """
     Fallback retrieval using in-memory embeddings (cosine similarity).
     """
-    model = SentenceTransformer(model_name, device=device)
+    model = SentenceTransformer(config.EMBEDDING_MODEL, device=device)
     query_embedding = model.encode([query], convert_to_numpy=True, device=device)
     sims = cosine_similarity(query_embedding, corpus_embeddings)
     top_idx = np.argsort(-sims[0])[:top_k]
@@ -178,11 +173,11 @@ def retrieve_top_k(query, corpus, corpus_embeddings, model_name=MODEL_NAME, devi
 # Entry point for script
 # ------------------------------
 if __name__ == "__main__":
-    corpus, corpus_embeddings = compute_embeddings()
+    corpus, corpus_embeddings = compute_embeddings(DEFAULT_CONFIG)
     if corpus is not None and corpus_embeddings is not None:
         # Example test retrieval
         query = "What is the top prize at the Cannes Film Festival?"
-        results, scores = retrieve_top_k(query, corpus, corpus_embeddings)
+        results, scores = retrieve_top_k(query, corpus, corpus_embeddings, DEFAULT_CONFIG)
         print("\nTop retrieved passages:")
         for passage, score in zip(results, scores):
             print(f"[score: {score:.4f}] {passage}\n---")

@@ -13,6 +13,7 @@ from datasets import load_from_disk, concatenate_datasets
 from sentence_transformers import SentenceTransformer
 from transformers import AutoTokenizer, AutoModelForCausalLM
 from tqdm import tqdm
+from config import Config, DEFAULT_CONFIG
 
 # Optional FAISS import
 try:
@@ -23,14 +24,7 @@ except ImportError:
 
 
 # ============================= CONFIG ============================= #
-TEST_PATH = "data/test"                  # <--- updated to your new folder
-SHARD_PREFIX = "shard_"                  
-MAX_QUESTIONS = 100                      
-
-EMBEDDINGS_FILE = Path("corpus_embeddings_unique.pkl")
-FAISS_INDEX_FILE = Path("corpus_faiss.index")
-PASSAGES_FILE = Path("corpus_passages.pkl")
-EMBED_MODEL_NAME = "all-MiniLM-L6-v2"
+MAX_QUESTIONS = 100
 GEN_MODEL_NAME = "mistralai/Mistral-7B-Instruct-v0.2"
 
 TOP_K = 5          # retrieve 5 passages for generation
@@ -38,19 +32,17 @@ DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 MAX_GEN_TOKENS = 128
 MAX_INPUT_LENGTH = 2048
 
-SAVE_FILE = "rag_eval_output.jsonl"      # enable write block to store results
-
 
 # ======================== LOAD TEST SHARDS ======================== #
-def load_test_100():
+def load_test_100(config: Config):
     shards = sorted([
-        os.path.join(TEST_PATH, d)
-        for d in os.listdir(TEST_PATH)
-        if d.startswith(SHARD_PREFIX)
+        os.path.join(config.TEST_DIR, d)
+        for d in os.listdir(config.TEST_DIR)
+        if d.startswith(DEFAULT_CONFIG.SHARD_PREFIX)
     ])
 
     if not shards:
-        raise RuntimeError(f"⚠ No shards found in {TEST_PATH}")
+        raise RuntimeError(f"⚠ No shards found in {config.TEST_DIR}")
 
     ds = concatenate_datasets([load_from_disk(sh) for sh in shards])
     return ds.select(range(min(MAX_QUESTIONS, len(ds))))
@@ -106,20 +98,23 @@ def contains_match(pred, gold_aliases):
 
 
 # =============================== MAIN =============================== #
-def run_full_rag_eval(embeddings_file=EMBEDDINGS_FILE):
+def run_full_rag_eval(config: Config = DEFAULT_CONFIG):
+    embed_model_name = Path(config.EMBEDDING_MODEL)
+    faiss_index_file = Path(config.FAISS_INDEX_FILE)
+    passages_file = Path(config.PASSAGES_FILE)
     print("\n=== Loading embeddings ===")
     faiss_index = None
     corpus_emb = None
     if not FAISS_AVAILABLE:
         raise ImportError("faiss is required. Install faiss-cpu and build the index via compute_embeddings.")
-    if not (FAISS_INDEX_FILE.exists() and PASSAGES_FILE.exists()):
+    if not (faiss_index_file.exists() and passages_file.exists()):
         raise FileNotFoundError("FAISS index/passages missing. Run src.compute_embeddings to build them.")
-    with open(PASSAGES_FILE, "rb") as f:
+    with open(passages_file, "rb") as f:
         corpus = pickle.load(f)["passages"]
-    faiss_index = faiss.read_index(str(FAISS_INDEX_FILE))
+    faiss_index = faiss.read_index(str(faiss_index_file)) # type: ignore
     print(f"🔹 Loaded FAISS index with {len(corpus)} passages")
 
-    embed_model = SentenceTransformer(EMBED_MODEL_NAME, device=DEVICE)
+    embed_model = SentenceTransformer(embed_model_name, device=DEVICE)
     tokenizer = AutoTokenizer.from_pretrained(GEN_MODEL_NAME, use_fast=True)
     if tokenizer.pad_token_id is None:
         tokenizer.pad_token = tokenizer.eos_token  # Mistral has no pad token
@@ -130,7 +125,7 @@ def run_full_rag_eval(embeddings_file=EMBEDDINGS_FILE):
     ).to(DEVICE if DEVICE == "cuda" else "cpu").eval()
 
     print("\n=== Loading Test dataset (100 samples) ===")
-    test = load_test_100()
+    test = load_test_100(config)
 
     em_results, contains_results = [], []
     output_log = []  # stored for optional write

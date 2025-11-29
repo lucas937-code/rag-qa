@@ -7,6 +7,7 @@ from tqdm import tqdm
 from datasets import load_from_disk, concatenate_datasets
 from sentence_transformers import SentenceTransformer
 from sklearn.metrics.pairwise import cosine_similarity
+from config import Config, DEFAULT_CONFIG
 
 # Optional FAISS import
 try:
@@ -19,15 +20,6 @@ except ImportError:
 # ======================================================
 # Configuration
 # ======================================================
-DATA_DIRS = {
-    "train": "data/train",
-    "validation": "data/validation",
-    "test": "data/test"
-}
-
-EMBEDDINGS_FILE = Path("corpus_embeddings_unique.pkl")
-FAISS_INDEX_FILE = Path("corpus_faiss.index")
-PASSAGES_FILE = Path("corpus_passages.pkl")
 SHARD_PREFIX = "shard_"
 TOP_K_VALUES = [1, 3, 5, 7, 10]
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
@@ -37,15 +29,18 @@ DEV_LIMIT = 1000   # number of samples used per split for evaluation
 # ======================================================
 # Load embeddings / index
 # ======================================================
-def load_embeddings(embeddings_file=EMBEDDINGS_FILE):
+def load_embeddings(config: Config):
+    embeddings_file = Path(config.EMBEDDINGS_FILE)
+    faiss_index_file = Path(config.FAISS_INDEX_FILE)
+    passages_file = Path(config.PASSAGES_FILE)
     if not FAISS_AVAILABLE:
         raise ImportError("faiss is required. Install faiss-cpu and build the index via compute_embeddings.")
-    if not (FAISS_INDEX_FILE.exists() and PASSAGES_FILE.exists()):
+    if not (faiss_index_file.exists() and passages_file.exists()):
         raise FileNotFoundError("FAISS index/passages missing. Run src.compute_embeddings to build them.")
 
-    with open(PASSAGES_FILE, "rb") as f:
+    with open(passages_file, "rb") as f:
         passages = pickle.load(f)["passages"]
-    index = faiss.read_index(str(FAISS_INDEX_FILE))
+    index = faiss.read_index(str(faiss_index_file)) # type: ignore
     print(f"🔹 Loaded FAISS index with {len(passages)} passages")
     return passages, None, index
 
@@ -103,8 +98,13 @@ def evaluate_recall(model, corpus, embeddings, dataset, top_k_values, faiss_inde
 # ======================================================
 # ORCHESTRATION FUNCTION
 # ======================================================
-def run_evaluation(embeddings_file=EMBEDDINGS_FILE):
-    corpus, emb, faiss_index = load_embeddings(embeddings_file=embeddings_file)
+def run_evaluation(config: Config = DEFAULT_CONFIG):
+    DATA_DIRS = {
+        "train": config.TRAIN_DIR,
+        "validation": config.VAL_DIR,
+        "test": config.TEST_DIR
+    }
+    corpus, emb, faiss_index = load_embeddings(config)
     model = SentenceTransformer("all-MiniLM-L6-v2", device=DEVICE)
 
     for name, path in DATA_DIRS.items():

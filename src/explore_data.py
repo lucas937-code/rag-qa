@@ -2,7 +2,6 @@ import os
 from collections import Counter
 import pandas as pd
 from datasets import load_from_disk, Value
-from config.paths import TRAIN_DIR, VAL_DIR, TEST_DIR
 
 MAX_LEN = 50  # Max length for string truncation in samples
 
