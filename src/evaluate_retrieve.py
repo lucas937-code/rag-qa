@@ -8,6 +8,13 @@ from datasets import load_from_disk, concatenate_datasets
 from sentence_transformers import SentenceTransformer
 from sklearn.metrics.pairwise import cosine_similarity
 
+# Optional FAISS import
+try:
+    import faiss  # type: ignore
+    FAISS_AVAILABLE = True
+except ImportError:
+    FAISS_AVAILABLE = False
+
 
 # ======================================================
 # Configuration
@@ -19,6 +26,8 @@ DATA_DIRS = {
 }
 
 EMBEDDINGS_FILE = Path("corpus_embeddings_unique.pkl")
+FAISS_INDEX_FILE = Path("corpus_faiss.index")
+PASSAGES_FILE = Path("corpus_passages.pkl")
 SHARD_PREFIX = "shard_"
 TOP_K_VALUES = [1, 3, 5, 7, 10]
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
@@ -26,9 +35,17 @@ DEV_LIMIT = 1000   # number of samples used per split for evaluation
 
 
 # ======================================================
-# Load embeddings
+# Load embeddings / index
 # ======================================================
 def load_embeddings(embeddings_file=EMBEDDINGS_FILE):
+    # Prefer FAISS artifacts if present
+    if FAISS_AVAILABLE and FAISS_INDEX_FILE.exists() and PASSAGES_FILE.exists():
+        with open(PASSAGES_FILE, "rb") as f:
+            passages = pickle.load(f)["passages"]
+        index = faiss.read_index(str(FAISS_INDEX_FILE))
+        print(f"🔹 Loaded FAISS index with {len(passages)} passages")
+        return passages, None, index
+
     if not embeddings_file.exists():
         raise FileNotFoundError(f"❌ Cannot find embeddings → {embeddings_file}")
 
@@ -39,7 +56,7 @@ def load_embeddings(embeddings_file=EMBEDDINGS_FILE):
     emb = data["embeddings"]
 
     print(f"🔹 Loaded {len(corpus)} passages with embeddings shape {emb.shape}")
-    return corpus, emb
+    return corpus, emb, None
 
 
 # ======================================================
@@ -66,7 +83,7 @@ def load_all_shards(base_dir):
 # ======================================================
 # Compute Recall@K
 # ======================================================
-def evaluate_recall(model, corpus, embeddings, dataset, top_k_values):
+def evaluate_recall(model, corpus, embeddings, dataset, top_k_values, faiss_index=None):
     recalls = {k: [] for k in top_k_values}
 
     for ex in tqdm(dataset, desc="Evaluating Recall"):
@@ -75,8 +92,15 @@ def evaluate_recall(model, corpus, embeddings, dataset, top_k_values):
 
         # Encode question
         q_emb = model.encode([question], convert_to_numpy=True, device=DEVICE)
-        sims = cosine_similarity(q_emb, embeddings)[0]
-        sorted_idx = np.argsort(-sims)
+        if faiss_index is not None and FAISS_AVAILABLE:
+            norm = np.linalg.norm(q_emb, axis=1, keepdims=True)
+            norm[norm == 0] = 1e-10
+            q_norm = (q_emb / norm).astype(np.float32)
+            scores, idx = faiss_index.search(q_norm, max(top_k_values))
+            sorted_idx = idx[0]
+        else:
+            sims = cosine_similarity(q_emb, embeddings)[0]
+            sorted_idx = np.argsort(-sims)
 
         # Evaluate Recall@K
         for k in top_k_values:
@@ -91,14 +115,14 @@ def evaluate_recall(model, corpus, embeddings, dataset, top_k_values):
 # ORCHESTRATION FUNCTION
 # ======================================================
 def run_evaluation(embeddings_file=EMBEDDINGS_FILE):
-    corpus, emb = load_embeddings(embeddings_file=embeddings_file)
+    corpus, emb, faiss_index = load_embeddings(embeddings_file=embeddings_file)
     model = SentenceTransformer("all-MiniLM-L6-v2", device=DEVICE)
 
     for name, path in DATA_DIRS.items():
         print(f"\n=== 🔥 Evaluating {name.upper()} — first {DEV_LIMIT} samples ===")
         dataset = load_all_shards(path)
 
-        results = evaluate_recall(model, corpus, emb, dataset, TOP_K_VALUES)
+        results = evaluate_recall(model, corpus, emb, dataset, TOP_K_VALUES, faiss_index)
         for k, score in results.items():
             print(f"Recall@{k}: {score:.4f}")
 

@@ -8,10 +8,19 @@ from sentence_transformers import SentenceTransformer
 from sklearn.metrics.pairwise import cosine_similarity
 from config.paths import TRAIN_DIR, VAL_DIR, TEST_DIR
 
+# Optional FAISS import
+try:
+    import faiss  # type: ignore
+    FAISS_AVAILABLE = True
+except ImportError:
+    FAISS_AVAILABLE = False
+
 # ------------------------------
 # Config
 # ------------------------------
 EMBEDDINGS_FILE = os.path.join(os.path.dirname(__file__), "..", "corpus_embeddings_unique.pkl")
+FAISS_INDEX_FILE = os.path.join(os.path.dirname(__file__), "..", "corpus_faiss.index")
+PASSAGES_FILE = os.path.join(os.path.dirname(__file__), "..", "corpus_passages.pkl")
 MODEL_NAME = "all-MiniLM-L6-v2"
 SHARD_PREFIX = "shard_"
 BATCH_SIZE = 512
@@ -126,10 +135,28 @@ def compute_embeddings(embeddings_file=EMBEDDINGS_FILE, force_recompute=False):
         corpus_embeddings.append(emb)
     corpus_embeddings = np.vstack(corpus_embeddings)
 
-    # 6. Save embeddings
+    # 6. Save embeddings (pickle) for backward compatibility
     with open(embeddings_file, "wb") as f:
         pickle.dump({"passages": corpus, "embeddings": corpus_embeddings}, f)
     print(f"Saved embeddings to {embeddings_file}")
+
+    # 7. Save passages separately (FAISS uses its own binary)
+    with open(PASSAGES_FILE, "wb") as f:
+        pickle.dump({"passages": corpus}, f)
+    print(f"Saved passages to {PASSAGES_FILE}")
+
+    # 8. Build FAISS index (inner product on L2-normalized vectors)
+    if FAISS_AVAILABLE:
+        norms = np.linalg.norm(corpus_embeddings, axis=1, keepdims=True)
+        norms[norms == 0] = 1e-10
+        emb_normalized = corpus_embeddings / norms
+        dim = emb_normalized.shape[1]
+        index = faiss.IndexFlatIP(dim)
+        index.add(emb_normalized.astype(np.float32))
+        faiss.write_index(index, FAISS_INDEX_FILE)
+        print(f"Saved FAISS index to {FAISS_INDEX_FILE} (dim={dim}, n={len(corpus)})")
+    else:
+        print("⚠ FAISS not installed. Install faiss-cpu to enable fast retrieval.")
 
     return corpus, corpus_embeddings
 
@@ -137,6 +164,9 @@ def compute_embeddings(embeddings_file=EMBEDDINGS_FILE, force_recompute=False):
 # Retrieval function
 # ------------------------------
 def retrieve_top_k(query, corpus, corpus_embeddings, model_name=MODEL_NAME, device=DEVICE, top_k=3):
+    """
+    Fallback retrieval using in-memory embeddings (cosine similarity).
+    """
     model = SentenceTransformer(model_name, device=device)
     query_embedding = model.encode([query], convert_to_numpy=True, device=device)
     sims = cosine_similarity(query_embedding, corpus_embeddings)

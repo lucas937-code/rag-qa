@@ -11,9 +11,16 @@ import numpy as np
 from pathlib import Path
 from datasets import load_from_disk, concatenate_datasets
 from sentence_transformers import SentenceTransformer
-from transformers import AutoTokenizer, AutoModelForSeq2SeqLM
+from transformers import AutoTokenizer, AutoModelForCausalLM
 from sklearn.metrics.pairwise import cosine_similarity
 from tqdm import tqdm
+
+# Optional FAISS import
+try:
+    import faiss  # type: ignore
+    FAISS_AVAILABLE = True
+except ImportError:
+    FAISS_AVAILABLE = False
 
 
 # ============================= CONFIG ============================= #
@@ -22,11 +29,15 @@ SHARD_PREFIX = "shard_"
 MAX_QUESTIONS = 100                      
 
 EMBEDDINGS_FILE = Path("corpus_embeddings_unique.pkl")
+FAISS_INDEX_FILE = Path("corpus_faiss.index")
+PASSAGES_FILE = Path("corpus_passages.pkl")
 EMBED_MODEL_NAME = "all-MiniLM-L6-v2"
-GEN_MODEL_NAME = "google/flan-t5-large"
+GEN_MODEL_NAME = "mistralai/Mistral-7B-Instruct-v0.2"
 
 TOP_K = 5          # retrieve 5 passages for generation
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
+MAX_GEN_TOKENS = 128
+MAX_INPUT_LENGTH = 2048
 
 SAVE_FILE = "rag_eval_output.jsonl"      # enable write block to store results
 
@@ -56,16 +67,31 @@ def retrieve(query, embed_model, corpus, corpus_emb, k=TOP_K):
 
 def generate(query, retrieved, tokenizer, model):
     context = "\n---\n".join(retrieved)
-    prompt = (
-        "You are a helpful factual assistant.\n"
-        "Answer only based on the given context.\n"
-        f"\nContext:\n{context}\n\n"
-        f"Question: {query}\nAnswer:"
+    messages = [
+        {"role": "system", "content": "You are a factual assistant. Answer only using the provided context."},
+        {"role": "user", "content": f"Context:\n{context}\n\nQuestion: {query}\nAnswer:"},
+    ]
+    prompt = tokenizer.apply_chat_template(
+        messages,
+        tokenize=False,
+        add_generation_prompt=True,
     )
 
-    inputs = tokenizer(prompt, return_tensors="pt").to(DEVICE)
+    inputs = tokenizer(
+        prompt,
+        return_tensors="pt",
+        truncation=True,
+        max_length=MAX_INPUT_LENGTH,
+        padding=True,
+    ).to(model.device)
     with torch.no_grad():
-        output = model.generate(**inputs, max_new_tokens=128)
+        output = model.generate(
+            **inputs,
+            max_new_tokens=MAX_GEN_TOKENS,
+            do_sample=False,
+            eos_token_id=tokenizer.eos_token_id,
+            pad_token_id=tokenizer.pad_token_id,
+        )
 
     return tokenizer.decode(output[0], skip_special_tokens=True).strip()
 
@@ -83,15 +109,29 @@ def contains_match(pred, gold_aliases):
 # =============================== MAIN =============================== #
 def run_full_rag_eval(embeddings_file=EMBEDDINGS_FILE):
     print("\n=== Loading embeddings ===")
-    if not embeddings_file.exists():
-        raise FileNotFoundError("❌ Embedding file missing. Compute embeddings first.")
-
-    data = pickle.load(open(embeddings_file, "rb"))
-    corpus, corpus_emb = data["passages"], data["embeddings"]
+    faiss_index = None
+    corpus_emb = None
+    if FAISS_AVAILABLE and FAISS_INDEX_FILE.exists() and PASSAGES_FILE.exists():
+        with open(PASSAGES_FILE, "rb") as f:
+            corpus = pickle.load(f)["passages"]
+        faiss_index = faiss.read_index(str(FAISS_INDEX_FILE))
+        print(f"🔹 Loaded FAISS index with {len(corpus)} passages")
+    else:
+        if not embeddings_file.exists():
+            raise FileNotFoundError("❌ Embedding file missing. Compute embeddings first.")
+        data = pickle.load(open(embeddings_file, "rb"))
+        corpus, corpus_emb = data["passages"], data["embeddings"]
+        print(f"🔹 Loaded {len(corpus)} passages with embeddings shape {corpus_emb.shape}")
 
     embed_model = SentenceTransformer(EMBED_MODEL_NAME, device=DEVICE)
-    tokenizer = AutoTokenizer.from_pretrained(GEN_MODEL_NAME)
-    gen_model = AutoModelForSeq2SeqLM.from_pretrained(GEN_MODEL_NAME).to(DEVICE).eval()
+    tokenizer = AutoTokenizer.from_pretrained(GEN_MODEL_NAME, use_fast=True)
+    if tokenizer.pad_token_id is None:
+        tokenizer.pad_token = tokenizer.eos_token  # Mistral has no pad token
+    gen_model = AutoModelForCausalLM.from_pretrained(
+        GEN_MODEL_NAME,
+        torch_dtype=torch.float16 if DEVICE == "cuda" else torch.float32,
+        device_map="auto" if DEVICE == "cuda" else None,
+    ).to(DEVICE if DEVICE == "cuda" else "cpu").eval()
 
     print("\n=== Loading Test dataset (100 samples) ===")
     test = load_test_100()
@@ -105,7 +145,16 @@ def run_full_rag_eval(embeddings_file=EMBEDDINGS_FILE):
         gold = ex["answer"]["normalized_value"]
         aliases = ex["answer"]["normalized_aliases"] + [gold]
 
-        retrieved = retrieve(q, embed_model, corpus, corpus_emb, k=TOP_K)
+        # Retrieval: prefer FAISS if available
+        if faiss_index is not None and FAISS_AVAILABLE:
+            q_emb = embed_model.encode([q], convert_to_numpy=True, device=DEVICE)
+            norm = np.linalg.norm(q_emb, axis=1, keepdims=True)
+            norm[norm == 0] = 1e-10
+            q_norm = (q_emb / norm).astype(np.float32)
+            scores, idx = faiss_index.search(q_norm, TOP_K)
+            retrieved = [corpus[i] for i in idx[0]]
+        else:
+            retrieved = retrieve(q, embed_model, corpus, corpus_emb, k=TOP_K)
         pred = generate(q, retrieved, tokenizer, gen_model)
 
         em_results.append(exact_match(pred, gold))
