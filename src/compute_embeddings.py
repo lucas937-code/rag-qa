@@ -21,14 +21,14 @@ except ImportError:
 BATCH_SIZE = 512
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 
-# Chunking parameters (token-based; MiniLM has a ~256 token limit)
-CHUNK_TOKENS = 240
-CHUNK_OVERLAP = 60
+# Default chunking parameters (token-based; MiniLM has a ~256 token limit)
+CHUNK_TOKENS_DEFAULT = 240
+CHUNK_OVERLAP_DEFAULT = 60
 
 # ------------------------------
 # Helper: Load all shards from one or multiple directories
 # ------------------------------
-def load_all_shards(data_dirs=None):
+def load_all_shards(data_dirs=None, max_shards_per_dir=None):
     if data_dirs is None:
         data_dirs = [DEFAULT_CONFIG.TRAIN_DIR, DEFAULT_CONFIG.VAL_DIR, DEFAULT_CONFIG.TEST_DIR]
 
@@ -38,6 +38,8 @@ def load_all_shards(data_dirs=None):
             continue
         shards = [os.path.join(data_dir, d) for d in os.listdir(data_dir) if d.startswith(DEFAULT_CONFIG.SHARD_PREFIX)]
         shards = sorted(shards)
+        if max_shards_per_dir is not None:
+            shards = shards[:max_shards_per_dir]
         for shard in tqdm(shards, desc=f"Loading shards from {data_dir}"):
             datasets.append(load_from_disk(shard))
 
@@ -48,7 +50,7 @@ def load_all_shards(data_dirs=None):
 # ------------------------------
 # Helper: Chunk passages
 # ------------------------------
-def chunk_passage(title, text, tokenizer, chunk_tokens=CHUNK_TOKENS, overlap=CHUNK_OVERLAP):
+def chunk_passage(title, text, tokenizer, chunk_tokens=CHUNK_TOKENS_DEFAULT, overlap=CHUNK_OVERLAP_DEFAULT):
     """
     Token-based chunking to avoid encoder truncation. Keeps simple overlaps.
     """
@@ -68,7 +70,7 @@ def chunk_passage(title, text, tokenizer, chunk_tokens=CHUNK_TOKENS, overlap=CHU
 # ------------------------------
 # Helper: Extract passages from dataset
 # ------------------------------
-def extract_passages(dataset, tokenizer):
+def extract_passages(dataset, tokenizer, chunk_tokens=CHUNK_TOKENS_DEFAULT, chunk_overlap=CHUNK_OVERLAP_DEFAULT):
     passages = []
     for example in tqdm(dataset, desc="Extracting passages"):
         entity_pages = example.get("entity_pages", {})
@@ -78,13 +80,21 @@ def extract_passages(dataset, tokenizer):
         for i in range(n_pages):
             title = titles[i] or "No Title"
             text = wiki_contexts[i]
-            passages.extend(chunk_passage(title, text, tokenizer))
+            passages.extend(chunk_passage(title, text, tokenizer, chunk_tokens=chunk_tokens, overlap=chunk_overlap))
     return passages
 
 # ------------------------------
 # Compute embeddings (with file existence check)
 # ------------------------------
-def compute_embeddings(config: Config, force_recompute=False, recompute_passages=False):
+def compute_embeddings(
+    config: Config,
+    force_recompute=False,
+    recompute_passages=False,
+    data_dirs=None,
+    max_shards_per_dir=None,
+    chunk_tokens: int = CHUNK_TOKENS_DEFAULT,
+    chunk_overlap: int = CHUNK_OVERLAP_DEFAULT,
+):
     """
     - If embeddings file exists and force_recompute=False: load and return.
     - Otherwise, reuse cached passages if available (unless recompute_passages=True),
@@ -109,7 +119,8 @@ def compute_embeddings(config: Config, force_recompute=False, recompute_passages
             corpus = pickle.load(f)["passages"]
         print(f"Reused cached passages from {config.PASSAGES_FILE} ({len(corpus)} passages).")
     else:
-        dataset = load_all_shards([config.TRAIN_DIR, config.VAL_DIR, config.TEST_DIR])
+        dirs_to_load = data_dirs if data_dirs is not None else [config.TRAIN_DIR, config.VAL_DIR, config.TEST_DIR]
+        dataset = load_all_shards(dirs_to_load, max_shards_per_dir=max_shards_per_dir)
         if dataset is None:
             print("No shards found! Make sure TRAIN/VAL/TEST dirs have shards.")
             return None, None
@@ -121,7 +132,7 @@ def compute_embeddings(config: Config, force_recompute=False, recompute_passages
         print(f"Using device: {DEVICE}")
 
         # 3. Extract passages (token-based chunking)
-        corpus = extract_passages(dataset, tokenizer)
+        corpus = extract_passages(dataset, tokenizer, chunk_tokens=chunk_tokens, chunk_overlap=chunk_overlap)
         
         # 4. Remove duplicates
         before = len(corpus)
