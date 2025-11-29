@@ -6,7 +6,7 @@ import torch
 from datasets import load_from_disk, concatenate_datasets
 from sentence_transformers import SentenceTransformer
 from sklearn.metrics.pairwise import cosine_similarity
-from config.paths import TRAIN_DIR
+from config.paths import TRAIN_DIR, VAL_DIR, TEST_DIR
 
 # ------------------------------
 # Config
@@ -22,14 +22,21 @@ CHUNK_TOKENS = 240
 CHUNK_OVERLAP = 60
 
 # ------------------------------
-# Helper: Load all shards
+# Helper: Load all shards from one or multiple directories
 # ------------------------------
-def load_all_shards(data_dir=TRAIN_DIR):
-    shards = [os.path.join(data_dir, d) for d in os.listdir(data_dir) if d.startswith(SHARD_PREFIX)]
-    shards = sorted(shards)
+def load_all_shards(data_dirs=None):
+    if data_dirs is None:
+        data_dirs = [TRAIN_DIR]
+
     datasets = []
-    for shard in tqdm(shards, desc="Loading shards"):
-        datasets.append(load_from_disk(shard))
+    for data_dir in data_dirs:
+        if not os.path.isdir(data_dir):
+            continue
+        shards = [os.path.join(data_dir, d) for d in os.listdir(data_dir) if d.startswith(SHARD_PREFIX)]
+        shards = sorted(shards)
+        for shard in tqdm(shards, desc=f"Loading shards from {data_dir}"):
+            datasets.append(load_from_disk(shard))
+
     if datasets:
         return concatenate_datasets(datasets)
     return None
@@ -91,9 +98,9 @@ def compute_embeddings(embeddings_file=EMBEDDINGS_FILE, force_recompute=False):
     print("Embeddings not found or force_recompute=True, computing embeddings...")
 
     # 1. Load dataset
-    dataset = load_all_shards()
+    dataset = load_all_shards([TRAIN_DIR, VAL_DIR, TEST_DIR])
     if dataset is None:
-        print("No shards found! Make sure TRAIN_DIR has shards.")
+        print("No shards found! Make sure TRAIN/VAL/TEST dirs have shards.")
         return None, None
     print(f"Loaded dataset with {len(dataset)} examples.")
 
