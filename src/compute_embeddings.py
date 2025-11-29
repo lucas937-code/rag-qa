@@ -84,10 +84,11 @@ def extract_passages(dataset, tokenizer):
 # ------------------------------
 # Compute embeddings (with file existence check)
 # ------------------------------
-def compute_embeddings(config: Config, force_recompute=False):
+def compute_embeddings(config: Config, force_recompute=False, recompute_passages=False):
     """
-    Computes embeddings or loads them if EMBEDDINGS_FILE exists.
-    Set force_recompute=True to overwrite existing embeddings.
+    - If embeddings file exists and force_recompute=False: load and return.
+    - Otherwise, reuse cached passages if available (unless recompute_passages=True),
+      then compute embeddings + FAISS index.
     Returns: corpus (list of passages), corpus_embeddings (numpy array)
     """
     if os.path.exists(config.EMBEDDINGS_FILE) and not force_recompute:
@@ -101,28 +102,43 @@ def compute_embeddings(config: Config, force_recompute=False):
 
     print("Embeddings not found or force_recompute=True, computing embeddings...")
 
-    # 1. Load dataset
-    dataset = load_all_shards([config.TRAIN_DIR, config.VAL_DIR, config.TEST_DIR])
-    if dataset is None:
-        print("No shards found! Make sure TRAIN/VAL/TEST dirs have shards.")
-        return None, None
-    print(f"Loaded dataset with {len(dataset)} examples.")
+    # 1. Passages: reuse cached file if available and not recomputing
+    corpus = None
+    if (not recompute_passages) and os.path.exists(config.PASSAGES_FILE):
+        with open(config.PASSAGES_FILE, "rb") as f:
+            corpus = pickle.load(f)["passages"]
+        print(f"Reused cached passages from {config.PASSAGES_FILE} ({len(corpus)} passages).")
+    else:
+        dataset = load_all_shards([config.TRAIN_DIR, config.VAL_DIR, config.TEST_DIR])
+        if dataset is None:
+            print("No shards found! Make sure TRAIN/VAL/TEST dirs have shards.")
+            return None, None
+        print(f"Loaded dataset with {len(dataset)} examples.")
 
-    # 2. Load model (also needed for tokenizer)
+        # 2. Load model (also needed for tokenizer)
+        model_tmp = SentenceTransformer(config.EMBEDDING_MODEL, device=DEVICE)
+        tokenizer = model_tmp.tokenizer
+        print(f"Using device: {DEVICE}")
+
+        # 3. Extract passages (token-based chunking)
+        corpus = extract_passages(dataset, tokenizer)
+        
+        # 4. Remove duplicates
+        before = len(corpus)
+        corpus = list(dict.fromkeys(corpus))
+        after = len(corpus)
+        print(f"Removed {before-after} duplicate passages ({after} unique).")
+
+        # 5. Save passages separately (FAISS uses its own binary)
+        with open(config.PASSAGES_FILE, "wb") as f:
+            pickle.dump({"passages": corpus}, f)
+        print(f"Saved passages to {config.PASSAGES_FILE}")
+
+    # 2. Load model for embeddings
     model = SentenceTransformer(config.EMBEDDING_MODEL, device=DEVICE)
-    tokenizer = model.tokenizer
     print(f"Using device: {DEVICE}")
 
-    # 3. Extract passages (token-based chunking)
-    corpus = extract_passages(dataset, tokenizer)
-    
-    # 4. Remove duplicates
-    before = len(corpus)
-    corpus = list(dict.fromkeys(corpus))
-    after = len(corpus)
-    print(f"Removed {before-after} duplicate passages ({after} unique).")
-
-    # 5. Compute embeddings in batches
+    # 3. Compute embeddings in batches
     corpus_embeddings = []
     for i in tqdm(range(0, len(corpus), BATCH_SIZE), desc="Computing embeddings"):
         batch = corpus[i:i+BATCH_SIZE]
@@ -130,17 +146,12 @@ def compute_embeddings(config: Config, force_recompute=False):
         corpus_embeddings.append(emb)
     corpus_embeddings = np.vstack(corpus_embeddings)
 
-    # 6. Save embeddings (pickle) for backward compatibility
+    # 4. Save embeddings (pickle) for backward compatibility
     with open(config.EMBEDDINGS_FILE, "wb") as f:
         pickle.dump({"passages": corpus, "embeddings": corpus_embeddings}, f)
     print(f"Saved embeddings to {config.EMBEDDINGS_FILE}")
 
-    # 7. Save passages separately (FAISS uses its own binary)
-    with open(config.PASSAGES_FILE, "wb") as f:
-        pickle.dump({"passages": corpus}, f)
-    print(f"Saved passages to {config.PASSAGES_FILE}")
-
-    # 8. Build FAISS index (inner product on L2-normalized vectors)
+    # 5. Build FAISS index (inner product on L2-normalized vectors)
     if FAISS_AVAILABLE:
         norms = np.linalg.norm(corpus_embeddings, axis=1, keepdims=True)
         norms[norms == 0] = 1e-10
