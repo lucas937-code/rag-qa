@@ -38,25 +38,16 @@ DEV_LIMIT = 1000   # number of samples used per split for evaluation
 # Load embeddings / index
 # ======================================================
 def load_embeddings(embeddings_file=EMBEDDINGS_FILE):
-    # Prefer FAISS artifacts if present
-    if FAISS_AVAILABLE and FAISS_INDEX_FILE.exists() and PASSAGES_FILE.exists():
-        with open(PASSAGES_FILE, "rb") as f:
-            passages = pickle.load(f)["passages"]
-        index = faiss.read_index(str(FAISS_INDEX_FILE))
-        print(f"🔹 Loaded FAISS index with {len(passages)} passages")
-        return passages, None, index
+    if not FAISS_AVAILABLE:
+        raise ImportError("faiss is required. Install faiss-cpu and build the index via compute_embeddings.")
+    if not (FAISS_INDEX_FILE.exists() and PASSAGES_FILE.exists()):
+        raise FileNotFoundError("FAISS index/passages missing. Run src.compute_embeddings to build them.")
 
-    if not embeddings_file.exists():
-        raise FileNotFoundError(f"❌ Cannot find embeddings → {embeddings_file}")
-
-    with open(embeddings_file, "rb") as f:
-        data = pickle.load(f)
-
-    corpus = data["passages"]
-    emb = data["embeddings"]
-
-    print(f"🔹 Loaded {len(corpus)} passages with embeddings shape {emb.shape}")
-    return corpus, emb, None
+    with open(PASSAGES_FILE, "rb") as f:
+        passages = pickle.load(f)["passages"]
+    index = faiss.read_index(str(FAISS_INDEX_FILE))
+    print(f"🔹 Loaded FAISS index with {len(passages)} passages")
+    return passages, None, index
 
 
 # ======================================================
@@ -92,15 +83,13 @@ def evaluate_recall(model, corpus, embeddings, dataset, top_k_values, faiss_inde
 
         # Encode question
         q_emb = model.encode([question], convert_to_numpy=True, device=DEVICE)
-        if faiss_index is not None and FAISS_AVAILABLE:
-            norm = np.linalg.norm(q_emb, axis=1, keepdims=True)
-            norm[norm == 0] = 1e-10
-            q_norm = (q_emb / norm).astype(np.float32)
-            scores, idx = faiss_index.search(q_norm, max(top_k_values))
-            sorted_idx = idx[0]
-        else:
-            sims = cosine_similarity(q_emb, embeddings)[0]
-            sorted_idx = np.argsort(-sims)
+        if faiss_index is None:
+            raise RuntimeError("FAISS index not loaded.")
+        norm = np.linalg.norm(q_emb, axis=1, keepdims=True)
+        norm[norm == 0] = 1e-10
+        q_norm = (q_emb / norm).astype(np.float32)
+        _, idx = faiss_index.search(q_norm, max(top_k_values))
+        sorted_idx = idx[0]
 
         # Evaluate Recall@K
         for k in top_k_values:

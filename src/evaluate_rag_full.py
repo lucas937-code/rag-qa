@@ -12,7 +12,6 @@ from pathlib import Path
 from datasets import load_from_disk, concatenate_datasets
 from sentence_transformers import SentenceTransformer
 from transformers import AutoTokenizer, AutoModelForCausalLM
-from sklearn.metrics.pairwise import cosine_similarity
 from tqdm import tqdm
 
 # Optional FAISS import
@@ -111,17 +110,14 @@ def run_full_rag_eval(embeddings_file=EMBEDDINGS_FILE):
     print("\n=== Loading embeddings ===")
     faiss_index = None
     corpus_emb = None
-    if FAISS_AVAILABLE and FAISS_INDEX_FILE.exists() and PASSAGES_FILE.exists():
-        with open(PASSAGES_FILE, "rb") as f:
-            corpus = pickle.load(f)["passages"]
-        faiss_index = faiss.read_index(str(FAISS_INDEX_FILE))
-        print(f"🔹 Loaded FAISS index with {len(corpus)} passages")
-    else:
-        if not embeddings_file.exists():
-            raise FileNotFoundError("❌ Embedding file missing. Compute embeddings first.")
-        data = pickle.load(open(embeddings_file, "rb"))
-        corpus, corpus_emb = data["passages"], data["embeddings"]
-        print(f"🔹 Loaded {len(corpus)} passages with embeddings shape {corpus_emb.shape}")
+    if not FAISS_AVAILABLE:
+        raise ImportError("faiss is required. Install faiss-cpu and build the index via compute_embeddings.")
+    if not (FAISS_INDEX_FILE.exists() and PASSAGES_FILE.exists()):
+        raise FileNotFoundError("FAISS index/passages missing. Run src.compute_embeddings to build them.")
+    with open(PASSAGES_FILE, "rb") as f:
+        corpus = pickle.load(f)["passages"]
+    faiss_index = faiss.read_index(str(FAISS_INDEX_FILE))
+    print(f"🔹 Loaded FAISS index with {len(corpus)} passages")
 
     embed_model = SentenceTransformer(EMBED_MODEL_NAME, device=DEVICE)
     tokenizer = AutoTokenizer.from_pretrained(GEN_MODEL_NAME, use_fast=True)
@@ -146,15 +142,12 @@ def run_full_rag_eval(embeddings_file=EMBEDDINGS_FILE):
         aliases = ex["answer"]["normalized_aliases"] + [gold]
 
         # Retrieval: prefer FAISS if available
-        if faiss_index is not None and FAISS_AVAILABLE:
-            q_emb = embed_model.encode([q], convert_to_numpy=True, device=DEVICE)
-            norm = np.linalg.norm(q_emb, axis=1, keepdims=True)
-            norm[norm == 0] = 1e-10
-            q_norm = (q_emb / norm).astype(np.float32)
-            scores, idx = faiss_index.search(q_norm, TOP_K)
-            retrieved = [corpus[i] for i in idx[0]]
-        else:
-            retrieved = retrieve(q, embed_model, corpus, corpus_emb, k=TOP_K)
+        q_emb = embed_model.encode([q], convert_to_numpy=True, device=DEVICE)
+        norm = np.linalg.norm(q_emb, axis=1, keepdims=True)
+        norm[norm == 0] = 1e-10
+        q_norm = (q_emb / norm).astype(np.float32)
+        scores, idx = faiss_index.search(q_norm, TOP_K)
+        retrieved = [corpus[i] for i in idx[0]]
         pred = generate(q, retrieved, tokenizer, gen_model)
 
         em_results.append(exact_match(pred, gold))

@@ -33,28 +33,23 @@ MAX_INPUT_LENGTH = 2048
 # ==============================
 def load_embeddings(file_path=EMBEDDINGS_FILE):
     """
-    Prefer FAISS index + passages if available; otherwise fallback to pickle embeddings.
+    Load FAISS index + passages. Fail fast if artifacts are missing.
     """
     global _faiss_index, _faiss_passages
 
-    if FAISS_AVAILABLE and FAISS_INDEX_FILE.exists() and PASSAGES_FILE.exists():
-        with open(PASSAGES_FILE, "rb") as f:
-            data = pickle.load(f)
-            passages = data["passages"]
-        _faiss_passages = passages
-        _faiss_index = faiss.read_index(str(FAISS_INDEX_FILE))
-        print(f"🔹 Loaded FAISS index with {len(passages)} passages")
-        return passages, None
+    if not FAISS_AVAILABLE:
+        raise ImportError("faiss is required. Install faiss-cpu and build the index via compute_embeddings.")
 
-    # Fallback to dense embeddings pickle
-    if not Path(file_path).exists():
-        raise FileNotFoundError(f"Embedding file not found → {file_path}")
+    if not (FAISS_INDEX_FILE.exists() and PASSAGES_FILE.exists()):
+        raise FileNotFoundError("FAISS index/passages missing. Run src.compute_embeddings to build them.")
 
-    with open(file_path, "rb") as f:
+    with open(PASSAGES_FILE, "rb") as f:
         data = pickle.load(f)
-
-    print(f"🔹 Loaded {len(data['passages'])} passages from {file_path}")
-    return data["passages"], data["embeddings"]
+        passages = data["passages"]
+    _faiss_passages = passages
+    _faiss_index = faiss.read_index(str(FAISS_INDEX_FILE))
+    print(f"🔹 Loaded FAISS index with {len(passages)} passages")
+    return passages, None
 
 
 # ==============================
@@ -96,22 +91,16 @@ def get_generator():
 # Retrieve passages
 # ==============================
 def retrieve_top_k(query, corpus, embeddings, k=TOP_K):
-    # Use FAISS if available and loaded
-    if FAISS_AVAILABLE and _faiss_index is not None:
-        embed_model = get_embedder()
-        q_emb = embed_model.encode([query], convert_to_numpy=True)
-        norm = np.linalg.norm(q_emb, axis=1, keepdims=True)
-        norm[norm == 0] = 1e-10
-        q_norm = (q_emb / norm).astype(np.float32)
-        scores, idx = _faiss_index.search(q_norm, k)
-        return [corpus[i] for i in idx[0]], scores[0]
+    if _faiss_index is None:
+        raise RuntimeError("FAISS index not loaded. Call load_embeddings() first.")
 
     embed_model = get_embedder()
     q_emb = embed_model.encode([query], convert_to_numpy=True)
-    sims = cosine_similarity(q_emb, embeddings)[0]
-
-    idx = np.argsort(-sims)[:k]
-    return [corpus[i] for i in idx], sims[idx]
+    norm = np.linalg.norm(q_emb, axis=1, keepdims=True)
+    norm[norm == 0] = 1e-10
+    q_norm = (q_emb / norm).astype(np.float32)
+    scores, idx = _faiss_index.search(q_norm, k)
+    return [corpus[i] for i in idx[0]], scores[0]
 
 
 # ==============================
