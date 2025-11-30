@@ -21,7 +21,7 @@ except ImportError:
 GEN_MODEL_NAME = "mistralai/Mistral-7B-Instruct-v0.2"
 TOP_K = 3
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
-MAX_GEN_TOKENS = 128
+MAX_GEN_TOKENS = 48
 MAX_INPUT_LENGTH = 2048
 RERANK_MODEL_NAME = "cross-encoder/ms-marco-MiniLM-L-6-v2"
 FAISS_CANDIDATES = 50
@@ -134,8 +134,17 @@ def generate_answer_combined(query, corpus, embeddings, top_k=5, config: Config 
 
     # Use instruct/chat template
     messages = [
-        {"role": "system", "content": "You are a factual assistant. Answer only using the provided context."},
-        {"role": "user", "content": f"Context:\n{context_block}\n\nQuestion: {query}\nAnswer:"},
+        {
+            "role": "system",
+            "content": (
+                "You are a concise QA assistant. Answer ONLY from the provided context. "
+                "If you are unsure, reply \"I don't know\". Respond in <=20 words."
+            ),
+        },
+        {
+            "role": "user",
+            "content": f"Context:\n{context_block}\n\nQuestion: {query}\nAnswer:",
+        },
     ]
     prompt = tokenizer.apply_chat_template(
         messages,

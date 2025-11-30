@@ -61,7 +61,13 @@ def retrieve(query, embed_model, corpus, corpus_emb, k=TOP_K):
 def generate(query, retrieved, tokenizer, model):
     context = "\n---\n".join(retrieved)
     messages = [
-        {"role": "system", "content": "You are a factual assistant. Answer only using the provided context."},
+        {
+            "role": "system",
+            "content": (
+                "You are a concise QA assistant. Answer ONLY from the provided context. "
+                "If unsure, reply \"I don't know\". Respond in <=20 words."
+            ),
+        },
         {"role": "user", "content": f"Context:\n{context}\n\nQuestion: {query}\nAnswer:"},
     ]
     prompt = tokenizer.apply_chat_template(
