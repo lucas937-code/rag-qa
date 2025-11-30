@@ -156,12 +156,14 @@ def run_full_rag_eval(config: Config = DEFAULT_CONFIG):
     tokenizer = AutoTokenizer.from_pretrained(GEN_MODEL_NAME, use_fast=True)
     if tokenizer.pad_token_id is None:
         tokenizer.pad_token = tokenizer.eos_token  # Mistral has no pad token
-    bnb = BitsAndBytesConfig(load_in_4bit=True, bnb_4bit_compute_type=torch.float16)
-    gen_model = AutoModelForCausalLM.from_pretrained(
-            GEN_MODEL_NAME,
-            quantization_config=bnb,
-            torch_dtype=torch.float16 if DEVICE == "cuda" else torch.float32,
-            device_map="auto" if DEVICE == "cuda" else None
+    bnb = BitsAndBytesConfig(
+        load_in_4bit=True,
+        bnb_4bit_compute_dtype=torch.float16  # <--- dtype, nicht type
+    )
+    _gen_model = AutoModelForCausalLM.from_pretrained(
+        GEN_MODEL_NAME,
+        quantization_config=bnb,
+        device_map="auto" if DEVICE == "cuda" else None,
     ).to(DEVICE if DEVICE == "cuda" else "cpu").eval()
 
     print("\n=== Loading Test dataset (100 samples) ===")
