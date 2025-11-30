@@ -5,9 +5,13 @@ import numpy as np
 from pathlib import Path
 from sklearn.metrics.pairwise import cosine_similarity
 from sentence_transformers import SentenceTransformer, CrossEncoder
-from transformers import AutoTokenizer, AutoModelForCausalLM
 from src.config import Config, DEFAULT_CONFIG
-
+from transformers import (
+    AutoTokenizer,
+    AutoModelForCausalLM,
+    AutoModelForSeq2SeqLM,
+    AutoConfig,
+)
 # Optional FAISS import
 try:
     import faiss  # type: ignore
@@ -18,7 +22,7 @@ except ImportError:
 # ==============================
 # Config
 # ==============================
-GEN_MODEL_NAME = "mistralai/Mistral-7B-Instruct-v0.2"
+GEN_MODEL_NAME = "google/flan-t5-base"
 TOP_K = 3
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 MAX_GEN_TOKENS = 48
@@ -76,19 +80,39 @@ def get_embedder(model_name):
 
 def get_generator():
     global _gen_model, _tokenizer
+
     if _gen_model is None:
-        print("🔹 Loading Mistral-7B-Instruct...")
+        print(f"🔹 Loading generator: {GEN_MODEL_NAME}")
+
+        # Load config and tokenizer
+        cfg = AutoConfig.from_pretrained(GEN_MODEL_NAME)
         _tokenizer = AutoTokenizer.from_pretrained(GEN_MODEL_NAME, use_fast=True)
-        # Mistral has no pad token
-        if _tokenizer.pad_token_id is None:
-            _tokenizer.pad_token = _tokenizer.eos_token
-        _gen_model = AutoModelForCausalLM.from_pretrained(
-            GEN_MODEL_NAME,
-            torch_dtype=torch.float16 if DEVICE == "cuda" else torch.float32,
-            device_map="auto" if DEVICE == "cuda" else None,
-        )
+
+        # Proper detection: encoder-decoder (T5/BART/etc.) vs decoder-only (GPT/etc.)
+        is_encoder_decoder = getattr(cfg, "is_encoder_decoder", False)
+
+        if is_encoder_decoder:
+            # Flan-T5, T5, BART, etc. → Seq2Seq
+            print("➡ Detected encoder-decoder (Seq2Seq) model.")
+            _gen_model = AutoModelForSeq2SeqLM.from_pretrained(
+                GEN_MODEL_NAME,
+                torch_dtype=torch.float16 if DEVICE == "cuda" else torch.float32,
+            ).to(DEVICE)
+        else:
+            # GPT-style models → CausalLM
+            print("➡ Detected decoder-only (CausalLM) model.")
+            if _tokenizer.pad_token_id is None:
+                _tokenizer.pad_token = _tokenizer.eos_token
+            _gen_model = AutoModelForCausalLM.from_pretrained(
+                GEN_MODEL_NAME,
+                torch_dtype=torch.float16 if DEVICE == "cuda" else torch.float32,
+                device_map="auto" if DEVICE == "cuda" else None,
+            )
+
         _gen_model.eval()
+
     return _tokenizer, _gen_model
+
 
 
 def get_reranker():
@@ -129,27 +153,15 @@ def generate_answer_combined(query, corpus, embeddings, top_k=5, config: Config 
     tokenizer, model = get_generator()
     if tokenizer is None or model is None:
         raise RuntimeError("Generator model or tokenizer not loaded.")
+
     top_passages, _ = retrieve_top_k(query, corpus, embeddings, config.EMBEDDING_MODEL, k=top_k)
     context_block = "\n---\n".join(top_passages)
 
-    # Use instruct/chat template
-    messages = [
-        {
-            "role": "system",
-            "content": (
-                "You are a concise QA assistant. Answer ONLY from the provided context. "
-                "If you are unsure, reply \"I don't know\". Respond in <=20 words."
-            ),
-        },
-        {
-            "role": "user",
-            "content": f"Context:\n{context_block}\n\nQuestion: {query}\nAnswer:",
-        },
-    ]
-    prompt = tokenizer.apply_chat_template(
-        messages,
-        tokenize=False,
-        add_generation_prompt=True,
+    # Simple text prompt for Flan-T5 (no chat template)
+    prompt = (
+        "You are a concise QA assistant. Answer ONLY from the provided context. "
+        "If you are unsure, reply \"I don't know\". Respond in <=20 words.\n\n"
+        f"Context:\n{context_block}\n\nQuestion: {query}\nAnswer:"
     )
 
     inputs = tokenizer(
@@ -164,13 +176,14 @@ def generate_answer_combined(query, corpus, embeddings, top_k=5, config: Config 
         output = model.generate(
             **inputs,
             max_new_tokens=MAX_GEN_TOKENS,
-            do_sample=False,       # or True + temperature for diversity
+            do_sample=False,
             eos_token_id=tokenizer.eos_token_id,
             pad_token_id=tokenizer.pad_token_id,
         )
 
     answer = tokenizer.decode(output[0], skip_special_tokens=True).strip()
     return answer, top_passages
+
 
 
 # ==============================

@@ -101,6 +101,7 @@ def compute_embeddings(
       then compute embeddings + FAISS index.
     Returns: corpus (list of passages), corpus_embeddings (numpy array)
     """
+    print()
     if os.path.exists(config.EMBEDDINGS_FILE) and not force_recompute:
         print(f"Loading saved embeddings from {config.EMBEDDINGS_FILE}...")
         with open(config.EMBEDDINGS_FILE, "rb") as f:

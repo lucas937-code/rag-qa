@@ -19,9 +19,9 @@ class Config():
         self.TRAIN_DIR    = os.path.join(self.DATA_DIR, train_dir)
         self.VAL_DIR      = os.path.join(self.DATA_DIR, val_dir)
         self.TEST_DIR     = os.path.join(self.DATA_DIR, test_dir)
-        self.EMBEDDINGS_FILE = os.path.join(self.BASE_DIR, embeddings_file)
-        self.FAISS_INDEX_FILE = os.path.join(self.BASE_DIR, faiss_index_file)
-        self.PASSAGES_FILE =  os.path.join(self.BASE_DIR, passages_file)
+        self.EMBEDDINGS_FILE = os.path.join(self.DATA_DIR, embeddings_file)
+        self.FAISS_INDEX_FILE = os.path.join(self.DATA_DIR, faiss_index_file)
+        self.PASSAGES_FILE =  os.path.join(self.DATA_DIR, passages_file)
         self.EMBEDDING_MODEL = embedding_model
         self.SHARD_PREFIX = "shard_"
 
