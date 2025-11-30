@@ -5,7 +5,7 @@ import numpy as np
 from pathlib import Path
 from sklearn.metrics.pairwise import cosine_similarity
 from sentence_transformers import SentenceTransformer, CrossEncoder
-from transformers import AutoTokenizer, AutoModelForCausalLM
+from transformers import AutoTokenizer, AutoModelForCausalLM, BitsAndBytesConfig
 from src.config import Config, DEFAULT_CONFIG
 
 # Optional FAISS import
@@ -82,8 +82,10 @@ def get_generator():
         # Mistral has no pad token
         if _tokenizer.pad_token_id is None:
             _tokenizer.pad_token = _tokenizer.eos_token
+        bnb = BitsAndBytesConfig(load_in_4bit=True, bnb_4bit_compute_type=torch.float16)
         _gen_model = AutoModelForCausalLM.from_pretrained(
             GEN_MODEL_NAME,
+            quantization_config=bnb,
             torch_dtype=torch.float16 if DEVICE == "cuda" else torch.float32,
             device_map="auto" if DEVICE == "cuda" else None,
         )
