@@ -12,6 +12,8 @@ from pathlib import Path
 from datasets import load_from_disk, concatenate_datasets
 from sentence_transformers import SentenceTransformer
 from transformers import AutoTokenizer, AutoModelForCausalLM
+import re
+import string
 from tqdm import tqdm
 from src.config import Config, DEFAULT_CONFIG
 
@@ -96,6 +98,36 @@ def contains_match(pred, gold_aliases):
     pred = pred.lower()
     return int(any(a.lower() in pred for a in gold_aliases))
 
+# TriviaQA-style normalization and EM/F1
+def normalize_answer(s: str):
+    def lower(text):
+        return text.lower()
+    def remove_punc(text):
+        return "".join(ch for ch in text if ch not in string.punctuation)
+    def remove_articles(text):
+        return re.sub(r"\b(a|an|the)\b", " ", text)
+    def white_space_fix(text):
+        return " ".join(text.split())
+    return white_space_fix(remove_articles(remove_punc(lower(s))))
+
+def em_score(pred: str, gold: str) -> int:
+    return int(normalize_answer(pred) == normalize_answer(gold))
+
+def f1_score(pred: str, gold: str) -> float:
+    pred_tokens = normalize_answer(pred).split()
+    gold_tokens = normalize_answer(gold).split()
+    if not pred_tokens and not gold_tokens:
+        return 1.0
+    if not pred_tokens or not gold_tokens:
+        return 0.0
+    common = set(pred_tokens) & set(gold_tokens)
+    num_same = sum(min(pred_tokens.count(tok), gold_tokens.count(tok)) for tok in common)
+    if num_same == 0:
+        return 0.0
+    precision = num_same / len(pred_tokens)
+    recall = num_same / len(gold_tokens)
+    return 2 * precision * recall / (precision + recall)
+
 
 # =============================== MAIN =============================== #
 def run_full_rag_eval(config: Config = DEFAULT_CONFIG):
@@ -127,7 +159,7 @@ def run_full_rag_eval(config: Config = DEFAULT_CONFIG):
     print("\n=== Loading Test dataset (100 samples) ===")
     test = load_test_100(config)
 
-    em_results, contains_results = [], []
+    em_results, f1_results = [], []
     output_log = []  # stored for optional write
 
     print("\n=== Running RAG Evaluation ===")
@@ -145,8 +177,8 @@ def run_full_rag_eval(config: Config = DEFAULT_CONFIG):
         retrieved = [corpus[i] for i in idx[0]]
         pred = generate(q, retrieved, tokenizer, gen_model)
 
-        em_results.append(exact_match(pred, gold))
-        contains_results.append(contains_match(pred, aliases))
+        em_results.append(max(em_score(pred, a) for a in aliases))
+        f1_results.append(max(f1_score(pred, a) for a in aliases))
 
         output_log.append({
             "question": q,
@@ -155,7 +187,7 @@ def run_full_rag_eval(config: Config = DEFAULT_CONFIG):
             "predicted": pred,
             "retrieved": [r[:200] for r in retrieved],
             "exact_match": em_results[-1],
-            "contains_match": contains_results[-1]
+            "f1": f1_results[-1],
         })
 
     # Optionally save
@@ -164,8 +196,8 @@ def run_full_rag_eval(config: Config = DEFAULT_CONFIG):
     #         f.write(json.dumps(row) + "\n")
 
     print("\n================ Final Results ================")
-    print(f"Exact Match Accuracy:       {np.mean(em_results):.4f}")
-    print(f"Contains-Match Accuracy:    {np.mean(contains_results):.4f}")
+    print(f"Exact Match (EM):           {np.mean(em_results):.4f}")
+    print(f"F1:                         {np.mean(f1_results):.4f}")
     # print(f"Results saved to {SAVE_FILE}")
 
 
