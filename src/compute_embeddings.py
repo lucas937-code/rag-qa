@@ -6,7 +6,7 @@ import torch
 from datasets import load_from_disk, concatenate_datasets
 from sentence_transformers import SentenceTransformer
 from sklearn.metrics.pairwise import cosine_similarity
-from src.config import Config, DEFAULT_CONFIG
+from src.config import Config, DEFAULT_CONFIG, LocalConfig
 
 # Optional FAISS import
 try:
@@ -195,11 +195,12 @@ def retrieve_top_k(query, corpus, corpus_embeddings, config: Config, device=DEVI
 # Entry point for script
 # ------------------------------
 if __name__ == "__main__":
-    corpus, corpus_embeddings = compute_embeddings(DEFAULT_CONFIG)
+    config = LocalConfig(embedding_model="BAAI/bge-base-en", base_dir="/mnt/c/dev/ml/rag-qa")
+    corpus, corpus_embeddings = compute_embeddings(config, force_recompute=True, recompute_passages=False)
     if corpus is not None and corpus_embeddings is not None:
         # Example test retrieval
         query = "What is the top prize at the Cannes Film Festival?"
-        results, scores = retrieve_top_k(query, corpus, corpus_embeddings, DEFAULT_CONFIG)
+        results, scores = retrieve_top_k(query, corpus, corpus_embeddings, config)
         print("\nTop retrieved passages:")
         for passage, score in zip(results, scores):
             print(f"[score: {score:.4f}] {passage}\n---")
