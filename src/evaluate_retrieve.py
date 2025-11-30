@@ -5,8 +5,9 @@ import numpy as np
 from pathlib import Path
 from tqdm import tqdm
 from datasets import load_from_disk, concatenate_datasets
-from sentence_transformers import SentenceTransformer
+from sentence_transformers import SentenceTransformer, CrossEncoder
 from sklearn.metrics.pairwise import cosine_similarity
+from src.config import Config, DEFAULT_CONFIG
 
 # Optional FAISS import
 try:
@@ -19,33 +20,29 @@ except ImportError:
 # ======================================================
 # Configuration
 # ======================================================
-DATA_DIRS = {
-    "train": "data/train",
-    "validation": "data/validation",
-    "test": "data/test"
-}
-
-EMBEDDINGS_FILE = Path("corpus_embeddings_unique.pkl")
-FAISS_INDEX_FILE = Path("corpus_faiss.index")
-PASSAGES_FILE = Path("corpus_passages.pkl")
 SHARD_PREFIX = "shard_"
 TOP_K_VALUES = [1, 3, 5, 7, 10]
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 DEV_LIMIT = 1000   # number of samples used per split for evaluation
+FAISS_CANDIDATES = 50  # number of initial candidates pulled from FAISS
+RERANK_MODEL_NAME = "cross-encoder/ms-marco-MiniLM-L-6-v2"
 
 
 # ======================================================
 # Load embeddings / index
 # ======================================================
-def load_embeddings(embeddings_file=EMBEDDINGS_FILE):
+def load_embeddings(config: Config):
+    embeddings_file = Path(config.EMBEDDINGS_FILE)
+    faiss_index_file = Path(config.FAISS_INDEX_FILE)
+    passages_file = Path(config.PASSAGES_FILE)
     if not FAISS_AVAILABLE:
         raise ImportError("faiss is required. Install faiss-cpu and build the index via compute_embeddings.")
-    if not (FAISS_INDEX_FILE.exists() and PASSAGES_FILE.exists()):
+    if not (faiss_index_file.exists() and passages_file.exists()):
         raise FileNotFoundError("FAISS index/passages missing. Run src.compute_embeddings to build them.")
 
-    with open(PASSAGES_FILE, "rb") as f:
+    with open(passages_file, "rb") as f:
         passages = pickle.load(f)["passages"]
-    index = faiss.read_index(str(FAISS_INDEX_FILE))
+    index = faiss.read_index(str(faiss_index_file)) # type: ignore
     print(f"🔹 Loaded FAISS index with {len(passages)} passages")
     return passages, None, index
 
@@ -74,8 +71,9 @@ def load_all_shards(base_dir):
 # ======================================================
 # Compute Recall@K
 # ======================================================
-def evaluate_recall(model, corpus, embeddings, dataset, top_k_values, faiss_index=None):
+def evaluate_recall(model, corpus, embeddings, dataset, top_k_values, faiss_index=None, reranker=None):
     recalls = {k: [] for k in top_k_values}
+    top_candidates = max(FAISS_CANDIDATES, max(top_k_values))
 
     for ex in tqdm(dataset, desc="Evaluating Recall"):
         question = ex["question"]
@@ -88,8 +86,16 @@ def evaluate_recall(model, corpus, embeddings, dataset, top_k_values, faiss_inde
         norm = np.linalg.norm(q_emb, axis=1, keepdims=True)
         norm[norm == 0] = 1e-10
         q_norm = (q_emb / norm).astype(np.float32)
-        _, idx = faiss_index.search(q_norm, max(top_k_values))
-        sorted_idx = idx[0]
+        _, idx = faiss_index.search(q_norm, top_candidates)
+        candidates_idx = idx[0]
+
+        if reranker is not None:
+            pairs = [(question, corpus[i]) for i in candidates_idx]
+            scores = reranker.predict(pairs)
+            order = np.argsort(-scores)
+            sorted_idx = candidates_idx[order]
+        else:
+            sorted_idx = candidates_idx
 
         # Evaluate Recall@K
         for k in top_k_values:
@@ -103,15 +109,21 @@ def evaluate_recall(model, corpus, embeddings, dataset, top_k_values, faiss_inde
 # ======================================================
 # ORCHESTRATION FUNCTION
 # ======================================================
-def run_evaluation(embeddings_file=EMBEDDINGS_FILE):
-    corpus, emb, faiss_index = load_embeddings(embeddings_file=embeddings_file)
-    model = SentenceTransformer("all-MiniLM-L6-v2", device=DEVICE)
+def run_evaluation(config: Config = DEFAULT_CONFIG):
+    DATA_DIRS = {
+        "train": config.TRAIN_DIR,
+        "validation": config.VAL_DIR,
+        "test": config.TEST_DIR
+    }
+    corpus, emb, faiss_index = load_embeddings(config)
+    model = SentenceTransformer(config.EMBEDDING_MODEL, device=DEVICE)
+    reranker = CrossEncoder(RERANK_MODEL_NAME, device=DEVICE)
 
     for name, path in DATA_DIRS.items():
         print(f"\n=== 🔥 Evaluating {name.upper()} — first {DEV_LIMIT} samples ===")
         dataset = load_all_shards(path)
 
-        results = evaluate_recall(model, corpus, emb, dataset, TOP_K_VALUES, faiss_index)
+        results = evaluate_recall(model, corpus, emb, dataset, TOP_K_VALUES, faiss_index, reranker)
         for k, score in results.items():
             print(f"Recall@{k}: {score:.4f}")
 

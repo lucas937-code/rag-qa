@@ -2,7 +2,6 @@ import os
 from collections import Counter
 import matplotlib.pyplot as plt
 from datasets import load_from_disk, concatenate_datasets
-from config.paths import TRAIN_DIR, VAL_DIR, TEST_DIR
 
 # Directory to save plots (project-root relative)
 PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))

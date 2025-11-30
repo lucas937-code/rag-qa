@@ -2,7 +2,9 @@
 
 *.npy
 *.pkl
+*.index
 
 data/
 
 *__pycache__/
+.idea/
