@@ -1,0 +1,24 @@
+Loading saved embeddings from corpus_embeddings.pkl...
+Loaded 3126042 passages.
+Number of unique passages: 787913
+Number of total passages: 3126042
+Number of embeddings: 3126042
+Embedding dimensions: 384
+[[ 0.02273042  0.03331743 -0.04362542 ...  0.0508522  -0.0404849
+  -0.01430002]
+ [ 0.03254429  0.07970084 -0.02696176 ...  0.08251368 -0.09055544
+  -0.0030508 ]
+ [ 0.02775626  0.0630108  -0.01901073 ...  0.00500697 -0.0205829
+  -0.01040905]
+ [-0.00342268  0.10466132  0.04919038 ... -0.01082673  0.00634014
+   0.10232759]
+ [-0.00333144  0.09692459  0.0351024  ...  0.05083009 -0.04164416
+   0.0761169 ]]
+
+Top k passages:
+- Cannes Film Festival: who determine the prizes for the feature films in Competition. * Cinéfondation and Short Films – Composed of a President and four film personalities. It awards the Short Film Palme d'Or as well as the three best films of the Cinéfondation. * Un Certain Regard – Composed of a President, journalists, students in cinema, and industry professionals. It awards the Un Certain Regard Prize for best film and can, moreover, honour two other films. * Caméra d'Or – Composed of a President, as well as film directors, technicians, and French and international critics. They award the best film in any category. Awards The most prestigious award given out at Cannes is the Palme d'Or ("Golden Palm") for the best film. * Competition ** Palme d'Or – Golden Palm ** Grand Prix – Grand Prize of the Festival ** Prix du Jury – Jury Prize ** Palme d'Or du court métrage – Best Short Film ** Prix d'interprétation féminine – Best Actress ** Prix d'interprétation masculine – Best Actor ** Prix de la mise en scène – Best Director ** Prix du scénario – Best Screenplay * Other Sections ** Prix Un Certain Regard – Young talent, innovative and audacious works
+---
+- Cannes Film Festival: who determine the prizes for the feature films in Competition. * Cinéfondation and Short Films – Composed of a President and four film personalities. It awards the Short Film Palme d'Or as well as the three best films of the Cinéfondation. * Un Certain Regard – Composed of a President, journalists, students in cinema, and industry professionals. It awards the Un Certain Regard Prize for best film and can, moreover, honour two other films. * Caméra d'Or – Composed of a President, as well as film directors, technicians, and French and international critics. They award the best film in any category. Awards The most prestigious award given out at Cannes is the Palme d'Or ("Golden Palm") for the best film. * Competition ** Palme d'Or – Golden Palm ** Grand Prix – Grand Prize of the Festival ** Prix du Jury – Jury Prize ** Palme d'Or du court métrage – Best Short Film ** Prix d'interprétation féminine – Best Actress ** Prix d'interprétation masculine – Best Actor ** Prix de la mise en scène – Best Director ** Prix du scénario – Best Screenplay * Other Sections ** Prix Un Certain Regard – Young talent, innovative and audacious works
+---
+- Cannes Film Festival: who determine the prizes for the feature films in Competition. * Cinéfondation and Short Films – Composed of a President and four film personalities. It awards the Short Film Palme d'Or as well as the three best films of the Cinéfondation. * Un Certain Regard – Composed of a President, journalists, students in cinema, and industry professionals. It awards the Un Certain Regard Prize for best film and can, moreover, honour two other films. * Caméra d'Or – Composed of a President, as well as film directors, technicians, and French and international critics. They award the best film in any category. Awards The most prestigious award given out at Cannes is the Palme d'Or ("Golden Palm") for the best film. * Competition ** Palme d'Or – Golden Palm ** Grand Prix – Grand Prize of the Festival ** Prix du Jury – Jury Prize ** Palme d'Or du court métrage – Best Short Film ** Prix d'interprétation féminine – Best Actress ** Prix d'interprétation masculine – Best Actor ** Prix de la mise en scène – Best Director ** Prix du scénario – Best Screenplay * Other Sections ** Prix Un Certain Regard – Young talent, innovative and audacious works
+---
