@@ -1,45 +1,4 @@
-Retriever gibt malmal die gleiche Antwort öfter?
-Tokenizer verwenden
-
-
-wir appenden alle inputtexte
-kommt ein text bei mehrern Fragen vor, dann haben wir den Text auch mehrfach im Trainidsdatensatz
-das dann uniquen wäre eine Idee
--> dumplikate werden jetzt entfernt
-
-
-1. Test retreiver
-mit test datensatz:
-für jede Frage
-    schaue ob die title zu tieln aus den files passen
-    das vom model retrieve ergebnis muss in der musterlösung enthalten sein
-    -> das wird gemacht im evaluate_rag_retrieve
-
-2. Embeding Parameter evaluieren: text length and overlap
-
-3. vergleich der beiden mit dem test retriever
-
-
-
-dann generator und fertig
-
-
----------------
-matthias
-branch aufräumen, refactor
-
-
-
-
-lucas
-append matthias pipeline on lucas code
-
-
-next:
-compare embedding and retrieve
-
----------
-plakat
+# Poster ideas
 
 comare with or without tokenizer
 
@@ -55,3 +14,30 @@ concrete exampel with question, retrieved chunks, generated answer, expected ans
 evaluation of whole pipeline
 
 compare acc on test and train dataset
+
+# Future ideas
+
+- Llama 3.1 (run locally)
+- few shot prompt
+- try out sparse embedding
+- clean up code & repo
+
+# Open questions
+
+- How to evaluate?
+- Why FAISS?
+- How does F1 evaluation work?
+- How does the re-ranker work (similarity/quality/relevance/...?)
+- embed all dataset splits or only a few?
+- Are train and test dataset disjoint?
+- wich LaTeX formatting? IEEE?
+
+# Poster improvements
+
+- grouped bar chart
+- example question (maybe in pipeline)
+- add chunking size 
+- (dataset description)
+- what to do next
+- enhace motivation part
+- re-ranking in extra box in pipeline
