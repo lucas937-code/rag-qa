@@ -41,3 +41,17 @@ compare acc on test and train dataset
 - what to do next
 - enhace motivation part
 - re-ranking in extra box in pipeline
+
+# F1 evaluation
+
+1. normalize prediction & golden answer:
+    - lowercasing
+    - remove punctuation
+    - remove "a"/"an"/"the"
+    - normalize white spaces
+2. tokenize prediction & golden answer
+3. count same tokens
+4. calculate precision & recall:
+    - $precision = \frac{num_{same}}{|tokens_{prediction}|}$
+    - $recall = \frac{num_{same}}{|tokens_{golden}|}$
+5. Calculate F1 score: $F1 = 2 \cdot precision \cdot \frac{recall}{precision + recall}$ ($0$ if $num_{same}=0$)
