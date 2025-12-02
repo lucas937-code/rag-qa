@@ -19,9 +19,9 @@ class Config():
         self.TRAIN_DIR    = os.path.join(self.DATA_DIR, train_dir)
         self.VAL_DIR      = os.path.join(self.DATA_DIR, val_dir)
         self.TEST_DIR     = os.path.join(self.DATA_DIR, test_dir)
-        self.EMBEDDINGS_FILE = os.path.join(self.DATA_DIR, embeddings_file)
-        self.FAISS_INDEX_FILE = os.path.join(self.DATA_DIR, faiss_index_file)
-        self.PASSAGES_FILE =  os.path.join(self.DATA_DIR, passages_file)
+        self.EMBEDDINGS_FILE = os.path.join(self.BASE_DIR, embeddings_file)
+        self.FAISS_INDEX_FILE = os.path.join(self.BASE_DIR, faiss_index_file)
+        self.PASSAGES_FILE =  os.path.join(self.BASE_DIR, passages_file)
         self.EMBEDDING_MODEL = embedding_model
         self.SHARD_PREFIX = "shard_"
 
@@ -77,6 +77,33 @@ class LocalConfig(Config):
                          faiss_index_file=faiss_index_file,
                          passages_file=passages_file,
                          embedding_model=embedding_model)
+
+class OllamaConfig(Config):
+    def __init__(self,
+                 base_dir=os.getcwd(),
+                 hf_cache_dir=".hf_cache",
+                 data_dir="data",
+                 train_dir="train",
+                 val_dir="validation",
+                 test_dir="test",
+                 embeddings_file="corpus_embeddings_unique.pkl",
+                 faiss_index_file="corpus_faiss.index",
+                 passages_file="corpus_passages.pkl",
+                 embedding_model="all-MiniLM-L6-v2",
+                 ollama_url="http://127.0.0.1:11434/api/chat",
+                 ollama_model="llama3.1:8b") -> None:
+        super().__init__(base_dir=base_dir,
+                         hf_cache_dir=hf_cache_dir,
+                         data_dir=data_dir,
+                         train_dir=train_dir,
+                         val_dir=val_dir,
+                         test_dir=test_dir,
+                         embeddings_file=embeddings_file,
+                         faiss_index_file=faiss_index_file,
+                         passages_file=passages_file,
+                         embedding_model=embedding_model)
+        self.OLLAMA_URL = ollama_url
+        self.OLLAMA_MODEL = ollama_model
     
 
 def is_colab():
