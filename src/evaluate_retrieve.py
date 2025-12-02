@@ -32,9 +32,9 @@ RERANK_MODEL_NAME = "cross-encoder/ms-marco-MiniLM-L-6-v2"
 # Load embeddings / index
 # ======================================================
 def load_embeddings(config: Config):
-    embeddings_file = Path(config.EMBEDDINGS_FILE)
-    faiss_index_file = Path(config.FAISS_INDEX_FILE)
-    passages_file = Path(config.PASSAGES_FILE)
+    embeddings_file = Path(config.embeddings_file)
+    faiss_index_file = Path(config.faiss_index_file)
+    passages_file = Path(config.passages_file)
     if not FAISS_AVAILABLE:
         raise ImportError("faiss is required. Install faiss-cpu and build the index via compute_embeddings.")
     if not (faiss_index_file.exists() and passages_file.exists()):
@@ -111,12 +111,12 @@ def evaluate_recall(model, corpus, embeddings, dataset, top_k_values, faiss_inde
 # ======================================================
 def run_evaluation(config: Config = DEFAULT_CONFIG):
     DATA_DIRS = {
-        "train": config.TRAIN_DIR,
-        "validation": config.VAL_DIR,
-        "test": config.TEST_DIR
+        "train": config.train_dir,
+        "validation": config.val_dir,
+        "test": config.test_dir
     }
     corpus, emb, faiss_index = load_embeddings(config)
-    model = SentenceTransformer(config.EMBEDDING_MODEL, device=DEVICE)
+    model = SentenceTransformer(config.embedding_model, device=DEVICE)
     reranker = CrossEncoder(RERANK_MODEL_NAME, device=DEVICE)
 
     for name, path in DATA_DIRS.items():

@@ -27,13 +27,13 @@ TOP_K           = 5          # top K passages fed to generator
 # ======================== LOAD TEST SHARDS ======================== #
 def load_test_100(config: Config, max_questions: int = MAX_QUESTIONS):
     shards = sorted([
-        os.path.join(config.TEST_DIR, d)
-        for d in os.listdir(config.TEST_DIR)
-        if d.startswith(DEFAULT_CONFIG.SHARD_PREFIX)
+        os.path.join(config.test_dir, d)
+        for d in os.listdir(config.test_dir)
+        if d.startswith(DEFAULT_CONFIG.shard_prefix)
     ])
 
     if not shards:
-        raise RuntimeError(f"⚠ No shards found in {config.TEST_DIR}")
+        raise RuntimeError(f"⚠ No shards found in {config.test_dir}")
 
     ds = concatenate_datasets([load_from_disk(sh) for sh in shards])
     return ds.select(range(min(max_questions, len(ds))))

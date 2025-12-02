@@ -1,10 +1,7 @@
-import pickle
 import requests
 import torch
-import numpy as np
-from pathlib import Path
-from sentence_transformers import SentenceTransformer, CrossEncoder
-from src.config import Config, OllamaConfig, DEFAULT_CONFIG
+from src.config import Config, OllamaConfig, DEFAULT_CONFIG, LocalConfig, ColabConfig
+from abc import ABC, abstractmethod
 from transformers import (
     AutoTokenizer,
     AutoModelForCausalLM,
@@ -12,235 +9,120 @@ from transformers import (
     AutoConfig,
 )
 
-# Optional FAISS import
-try:
-    import faiss  # type: ignore
-    FAISS_AVAILABLE = True
-except ImportError:
-    FAISS_AVAILABLE = False
+class Generator(ABC):
+    def __init__(self, 
+                 config: Config,
+                 max_gen_tokens: int = 48,
+                 max_input_length: int = 2048) -> None:
+        self.config = config
+        self.device = "cuda" if torch.cuda.is_available() else "cpu"
+        self.max_gen_tokens = max_gen_tokens
+        self.max_input_length = max_input_length
 
-# ==============================
-# Config
-# ==============================
-GEN_MODEL_NAME = "google/flan-t5-large"
-TOP_K = 3
-DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
-MAX_GEN_TOKENS = 48
-MAX_INPUT_LENGTH = 2048
-RERANK_MODEL_NAME = "cross-encoder/ms-marco-MiniLM-L-6-v2"
-FAISS_CANDIDATES = 100
-OLLAMA_URL = "http://localhost:11434/api/chat"
+    @abstractmethod
+    def generate(self, query: str, passages: list):
+        pass
+    
+class HFGenerator(Generator):
+    def __init__(self, 
+                 config: LocalConfig | ColabConfig,
+                 max_gen_tokens: int = 48,
+                 max_input_length: int = 2048):
+        super().__init__(config, max_gen_tokens, max_input_length)
+        self.tokenizer, self.gen_model = self._get_generator(config.generator_model, self.device)
 
+    def _get_generator(self, gen_model_name: str, device: str):
+        cfg = AutoConfig.from_pretrained(gen_model_name, use_fast=True)
+        tokenizer = AutoTokenizer.from_pretrained(gen_model_name, use_fast=True)
+        
+        is_concoder_decoder = getattr(cfg, "is_encoder_decoder", False)
 
-# ==============================
-# Load embeddings / index
-# ==============================
-def load_embeddings(config: Config = DEFAULT_CONFIG):
-    """
-    Load FAISS index + passages. Fail fast if artifacts are missing.
-    """
-    global _faiss_index, _faiss_passages
-    FAISS_INDEX_FILE = Path(config.FAISS_INDEX_FILE)
-    PASSAGES_FILE = Path(config.PASSAGES_FILE)
-
-    if not FAISS_AVAILABLE:
-        raise ImportError("faiss is required. Install faiss-cpu and build the index via compute_embeddings.")
-
-    if not (FAISS_INDEX_FILE.exists() and PASSAGES_FILE.exists()):
-        raise FileNotFoundError("FAISS index/passages missing. Run src.compute_embeddings to build them.")
-
-    with open(PASSAGES_FILE, "rb") as f:
-        data = pickle.load(f)
-        passages = data["passages"]
-    _faiss_passages = passages
-    _faiss_index = faiss.read_index(str(FAISS_INDEX_FILE)) # type: ignore
-    print(f"🔹 Loaded FAISS index with {len(passages)} passages")
-    return passages, None
-
-
-# ==============================
-# Init models / index (lazy-loaded)
-# ==============================
-_embed_model = None
-_embed_model_name = None
-_gen_model = None
-_tokenizer = None
-_faiss_index = None
-_faiss_passages = None
-_reranker = None
-
-def get_generator():
-    global _gen_model, _tokenizer
-
-    if _gen_model is None:
-        print(f"🔹 Loading generator: {GEN_MODEL_NAME}")
-
-        # Load config and tokenizer
-        cfg = AutoConfig.from_pretrained(GEN_MODEL_NAME)
-        _tokenizer = AutoTokenizer.from_pretrained(GEN_MODEL_NAME, use_fast=True)
-
-        # Proper detection: encoder-decoder (T5/BART/etc.) vs decoder-only (GPT/etc.)
-        is_encoder_decoder = getattr(cfg, "is_encoder_decoder", False)
-
-        if is_encoder_decoder:
-            # Flan-T5, T5, BART, etc. → Seq2Seq
-            print("➡ Detected encoder-decoder (Seq2Seq) model.")
-            _gen_model = AutoModelForSeq2SeqLM.from_pretrained(
-                GEN_MODEL_NAME,
-                torch_dtype=torch.float16 if DEVICE == "cuda" else torch.float32,
-            ).to(DEVICE)
+        if is_concoder_decoder:
+            model = AutoModelForSeq2SeqLM.from_pretrained(
+                gen_model_name,
+                torch_dtype=torch.float16 if device == "cuda" else torch.float32,
+            ).to(device)
         else:
-            # GPT-style models → CausalLM
-            print("➡ Detected decoder-only (CausalLM) model.")
-            if _tokenizer.pad_token_id is None:
-                _tokenizer.pad_token = _tokenizer.eos_token
-            _gen_model = AutoModelForCausalLM.from_pretrained(
-                GEN_MODEL_NAME,
-                torch_dtype=torch.float16 if DEVICE == "cuda" else torch.float32,
-                device_map="auto" if DEVICE == "cuda" else None,
+            if tokenizer.pad_token is None:
+                tokenizer.pad_token = tokenizer.eos_token
+            model = AutoModelForCausalLM.from_pretrained(
+                gen_model_name,
+                torch_dtype=torch.float16 if device == "cuda" else torch.float32,
+                device_map="auto" if device == "cuda" else None
             )
+        return tokenizer, model
 
-        _gen_model.eval()
-
-    return _tokenizer, _gen_model
-
-
-def get_embedder(model_name):
-    global _embed_model, _embed_model_name
-    if _embed_model is None or _embed_model_name != model_name:
-        print(f"🔹 Loading embedding model {model_name}...")
-        _embed_model = SentenceTransformer(model_name, device=DEVICE)
-        _embed_model_name = model_name
-    return _embed_model
-
-
-def get_reranker():
-    global _reranker
-    if _reranker is None:
-        print("🔹 Loading cross-encoder reranker...")
-        _reranker = CrossEncoder(RERANK_MODEL_NAME, device=DEVICE)
-    return _reranker
-
-
-# ==============================
-# Retrieve passages
-# ==============================
-def retrieve_top_k(query, corpus, embeddings, model_name, k=TOP_K):
-    if _faiss_index is None:
-        raise RuntimeError("FAISS index not loaded. Call load_embeddings() first.")
-
-    embed_model = get_embedder(model_name)
-    q_emb = embed_model.encode([query], convert_to_numpy=True)
-    norm = np.linalg.norm(q_emb, axis=1, keepdims=True)
-    norm[norm == 0] = 1e-10
-    q_norm = (q_emb / norm).astype(np.float32)
-    scores, idx = _faiss_index.search(q_norm, FAISS_CANDIDATES)
-    candidates_idx = idx[0]
-
-    reranker = get_reranker()
-    pairs = [(query, corpus[i]) for i in candidates_idx]
-    rerank_scores = reranker.predict(pairs)
-    order = np.argsort(-rerank_scores)
-    top_idx = candidates_idx[order][:k]
-    return [corpus[i] for i in top_idx], rerank_scores[order][:k]
-
-
-# ==============================
-# Ollama chat call
-# ==============================
-def call_ollama(messages, ollama_url, model, max_new_tokens=MAX_GEN_TOKENS):
-    resp = requests.post(
-        ollama_url,
-        json={
-            "model": model,
-            "messages": messages,
-            "stream": False,
-            "options": {"num_predict": max_new_tokens},
-        },
-        timeout=120,
-    )
-    resp.raise_for_status()
-    data = resp.json()
-    return data["message"]["content"]
-
-
-# ==============================
-# Generate answer from combined top-K context
-# ==============================
-def generate_answer_combined_ollama(query, corpus, embeddings, config: OllamaConfig, top_k=5):
-    top_passages, _ = retrieve_top_k(query, corpus, embeddings, config.EMBEDDING_MODEL, k=top_k)
-    context_block = "\n---\n".join(top_passages)
-
-    # Simple text prompt for Flan-T5 (no chat template)
-    messages = [
-        {
-            "role": "system",
-            "content": (
-                "You are a concise QA assistant. Answer ONLY from the provided context. "
-                "If you are unsure, reply \"I don't know\". Respond with the answer only."
-            ),
-        },
-        {
-            "role": "user",
-            "content": f"Context:\n{context_block}\n\nQuestion: {query}\nAnswer:",
-        },
-    ]
-
-    answer = call_ollama(messages, config.OLLAMA_URL, model=config.OLLAMA_MODEL, max_new_tokens=MAX_GEN_TOKENS).strip()
-    return answer, top_passages
-
-def generate_answer_combined_hf(query, corpus, embeddings, top_k=5, config: Config = DEFAULT_CONFIG):
-    tokenizer, model = get_generator()
-    if tokenizer is None or model is None:
-        raise RuntimeError("Generator model or tokenizer not loaded.")
-
-    top_passages, _ = retrieve_top_k(query, corpus, embeddings, config.EMBEDDING_MODEL, k=top_k)
-    context_block = "\n---\n".join(top_passages)
-
-    # Simple text prompt for Flan-T5 (no chat template)
-    prompt = (
-        "You are a concise QA assistant. Answer ONLY from the provided context. "
-        "If you are unsure, reply \"I don't know\". Respond in <=20 words.\n\n"
-        f"Context:\n{context_block}\n\nQuestion: {query}\nAnswer:"
-    )
-
-    inputs = tokenizer(
-        prompt,
-        return_tensors="pt",
-        truncation=True,
-        max_length=MAX_INPUT_LENGTH,
-        padding=True,
-    ).to(model.device)
-
-    with torch.no_grad():
-        output = model.generate(
-            **inputs,
-            max_new_tokens=MAX_GEN_TOKENS,
-            do_sample=False,
-            eos_token_id=tokenizer.eos_token_id,
-            pad_token_id=tokenizer.pad_token_id,
+    def generate(self, query: str, passages: list):
+        if self.tokenizer is None or self.gen_model is None:
+            raise ValueError("HuggingFace tokenizer or model is not initialized.")
+        
+        context_block = "\n---\n".join(passages)
+        prompt = (
+            "You are a concise QA assistant. Answer ONLY from the provided context. "
+            "If you are unsure, reply \"I don't know\". Respond in <=20 words.\n\n"
+            f"Context:\n{context_block}\n\nQuestion: {query}\nAnswer:"
         )
 
-    answer = tokenizer.decode(output[0], skip_special_tokens=True).strip()
-    return answer, top_passages
+        inputs = self.tokenizer(
+            prompt,
+            return_tensors="pt",
+            max_length=self.max_input_length,
+            truncation=True,
+            padding=True).to(self.gen_model.device)
+        
+        with torch.no_grad():
+            output = self.gen_model.generate(
+                **inputs,
+                max_new_tokens=self.max_gen_tokens,
+                do_sample=False,
+                eos_token_id=self.tokenizer.eos_token_id,
+                pad_token_id=self.tokenizer.pad_token_id)
+            
+        answer = self.tokenizer.decode(output[0], skip_special_tokens=True).strip()
+        return answer
+    
+class OllamaGenerator(Generator):
+    def __init__(self, 
+                 config: OllamaConfig,
+                 max_gen_tokens: int = 48,
+                 max_input_length: int = 2048):
+        super().__init__(config, max_gen_tokens, max_input_length)
+        self.ollama_url = config.ollama_url
+        self.ollama_model = config.generator_model
 
-def generate_answer_combined(query, corpus, embeddings, top_k=5, config: Config = DEFAULT_CONFIG):
-    if isinstance(config, OllamaConfig):
-        return generate_answer_combined_ollama(query, corpus, embeddings, config=config, top_k=top_k)
-    else:
-        return generate_answer_combined_hf(query, corpus, embeddings, top_k=top_k, config=config)
+    def _call_ollama(self, messages: list, max_gen_tokens: int):
+        if self.ollama_url is None:
+            raise ValueError("Ollama URL is not set in the configuration.")
+        
+        resp = requests.post(
+        self.ollama_url,
+        json={
+            "model": self.ollama_model,
+            "messages": messages,
+            "stream": False,
+            "options": {"num_predict": max_gen_tokens},
+        },
+        timeout=120)
+        resp.raise_for_status()
+        data = resp.json()
+        return data["message"]["content"]
 
-# ==============================
-# Manual test (cmd terminal)
-# ==============================
-if __name__ == "__main__":
-    corpus, emb = load_embeddings()
-    q = "The medical condition glaucoma affects which part of the body?"
+    def generate(self, query: str, passages: list):
+        context_block = "\n---\n".join(passages)
 
-    passages, _ = retrieve_top_k(q, corpus, emb, DEFAULT_CONFIG.EMBEDDING_MODEL, k=3)
-    print("\nRetrieved passages:")
-    for i, p in enumerate(passages):
-        print(f"{i+1}. {p[:200].replace(chr(10),' ')}...")
-
-    print("\nGenerated Answer:")
-    print(generate_answer_combined(q, corpus, emb, top_k=5)[0])
+        messages = [
+            {
+                "role": "system",
+                "content": (
+                    "You are a concise QA assistant. Answer ONLY from the provided context. "
+                    "If you are unsure, reply \"I don't know\". Respond with the answer only."
+                ),
+            },
+            {
+                "role": "user",
+                "content": f"Context:\n{context_block}\n\nQuestion: {query}\nAnswer:",
+            },
+        ]
+        
+        answer = self._call_ollama(messages, self.max_gen_tokens)
+        return answer
