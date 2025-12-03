@@ -14,7 +14,9 @@ class Config():
                  passages_file: str,
                  embedding_model: str,
                  rerank_model: str,
-                 generator_model: str) -> None:
+                 generator_model: str,
+                 val_split_size: int,
+                 shard_batch_size: int) -> None:
         self.base_dir = base_dir
         self.hf_cache_dir = os.path.join(self.base_dir, hf_cache_dir)
         self.data_dir     = os.path.join(self.base_dir, data_dir)
@@ -28,6 +30,8 @@ class Config():
         self.rerank_model = rerank_model
         self.generator_model = generator_model
         self.shard_prefix = "shard_"
+        self.val_split_size = val_split_size
+        self.shard_batch_size = shard_batch_size
 
     def ensure_dirs(self):
         for p in [self.hf_cache_dir, self.data_dir, self.train_dir, self.val_dir, self.test_dir]:
@@ -47,7 +51,9 @@ class ColabConfig(Config):
                  passages_file="corpus_passages.pkl",
                  embedding_model="all-MiniLM-L6-v2",
                  rerank_model="cross-encoder/ms-marco-MiniLM-L-6-v2",
-                 generator_model="google/flan-t5-large") -> None:
+                 generator_model="google/flan-t5-large",
+                 val_split_size: int=7900,
+                 shard_batch_size: int=1000) -> None:
         from google.colab import drive # type: ignore
         drive.mount("/content/drive")
         super().__init__(base_dir=base_dir,
@@ -61,7 +67,9 @@ class ColabConfig(Config):
                          passages_file=passages_file,
                          embedding_model=embedding_model,
                          rerank_model=rerank_model,
-                         generator_model=generator_model)
+                         generator_model=generator_model,
+                         val_split_size=val_split_size,
+                         shard_batch_size=shard_batch_size)
 
 class LocalConfig(Config):
     def __init__(self,
@@ -76,7 +84,9 @@ class LocalConfig(Config):
                  passages_file="corpus_passages.pkl",
                  embedding_model="all-MiniLM-L6-v2",
                  rerank_model="cross-encoder/ms-marco-MiniLM-L-6-v2",
-                 generator_model="google/flan-t5-large") -> None:
+                 generator_model="google/flan-t5-large",
+                 val_split_size: int=7900,
+                 shard_batch_size: int=1000) -> None:
         super().__init__(base_dir=base_dir,
                          hf_cache_dir=hf_cache_dir,
                          data_dir=data_dir,
@@ -88,7 +98,9 @@ class LocalConfig(Config):
                          passages_file=passages_file,
                          embedding_model=embedding_model,
                          rerank_model=rerank_model,
-                         generator_model=generator_model)
+                         generator_model=generator_model,
+                         val_split_size=val_split_size,
+                         shard_batch_size=shard_batch_size)
 
 class OllamaConfig(Config):
     def __init__(self,
@@ -104,7 +116,9 @@ class OllamaConfig(Config):
                  embedding_model="all-MiniLM-L6-v2",
                  generator_model="llama3.1:8b",
                  rerank_model="cross-encoder/ms-marco-MiniLM-L-6-v2",
-                 ollama_url="http://127.0.0.1:11434/api/chat") -> None:
+                 ollama_url="http://127.0.0.1:11434/api/chat",
+                 val_split_size: int=7900,
+                 shard_batch_size: int=1000) -> None:
         super().__init__(base_dir=base_dir,
                          hf_cache_dir=hf_cache_dir,
                          data_dir=data_dir,
@@ -116,7 +130,9 @@ class OllamaConfig(Config):
                          passages_file=passages_file,
                          embedding_model=embedding_model,
                          rerank_model=rerank_model,
-                         generator_model=generator_model)
+                         generator_model=generator_model,
+                         val_split_size=val_split_size,
+                         shard_batch_size=shard_batch_size)
         self.ollama_url = ollama_url
     
 
