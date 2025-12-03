@@ -16,6 +16,13 @@ class Embedder:
         self.batch_size = config.embeddings_batch_size
         self.model_name = config.embedding_model
         self.device = "cuda" if torch.cuda.is_available() else "cpu"
+        self.embeddings_file = config.embeddings_file
+        self.faiss_index_file = config.faiss_index_file
+        self.passages_file = config.passages_file
+        self.model_name = config.embedding_model
+        self.train_dir = config.train_dir
+        self.val_dir = config.val_dir
+        self.test_dir = config.test_dir
 
     # ===== Internal Methods =====
     def _load_all_shards(self, data_dirs=None, max_shards_per_dir=None):
@@ -69,8 +76,7 @@ class Embedder:
 
     # ===== Public Methods =====
     def compute_embeddings(
-        self, 
-        config: Config,
+        self,
         force_recompute=False,
         recompute_passages=False,
         data_dirs=None,
@@ -82,9 +88,9 @@ class Embedder:
         Returns: corpus (list of passages), corpus_embeddings (numpy array)
         """
         print()
-        if os.path.exists(config.embeddings_file) and not force_recompute:
-            print(f"Loading saved embeddings from {config.embeddings_file}...")
-            with open(config.embeddings_file, "rb") as f:
+        if os.path.exists(self.embeddings_file) and not force_recompute:
+            print(f"Loading saved embeddings from {self.embeddings_file}...")
+            with open(self.embeddings_file, "rb") as f:
                 data = pickle.load(f)
                 corpus_embeddings = data["embeddings"]
                 corpus = data["passages"]
@@ -95,12 +101,12 @@ class Embedder:
 
         # 1. Passages: reuse cached file if available and not recomputing
         corpus = None
-        if (not recompute_passages) and os.path.exists(config.passages_file):
-            with open(config.passages_file, "rb") as f:
+        if (not recompute_passages) and os.path.exists(self.passages_file):
+            with open(self.passages_file, "rb") as f:
                 corpus = pickle.load(f)["passages"]
-            print(f"Reused cached passages from {config.passages_file} ({len(corpus)} passages).")
+            print(f"Reused cached passages from {self.passages_file} ({len(corpus)} passages).")
         else:
-            dirs_to_load = data_dirs if data_dirs is not None else [config.train_dir, config.val_dir, config.test_dir]
+            dirs_to_load = data_dirs if data_dirs is not None else [self.train_dir, self.val_dir, self.test_dir]
             dataset = self._load_all_shards(dirs_to_load, max_shards_per_dir=max_shards_per_dir)
             if dataset is None:
                 print("No shards found! Make sure TRAIN/VAL/TEST dirs have shards.")
@@ -108,7 +114,7 @@ class Embedder:
             print(f"Loaded dataset with {len(dataset)} examples.")
 
             # 2. Load model (also needed for tokenizer)
-            model_tmp = SentenceTransformer(config.embedding_model, device=self.device)
+            model_tmp = SentenceTransformer(self.model_name, device=self.device)
             tokenizer = model_tmp.tokenizer
             print(f"Using device: {self.device}")
 
@@ -122,12 +128,12 @@ class Embedder:
             print(f"Removed {before-after} duplicate passages ({after} unique).")
 
             # 5. Save passages separately (FAISS uses its own binary)
-            with open(config.passages_file, "wb") as f:
+            with open(self.passages_file, "wb") as f:
                 pickle.dump({"passages": corpus}, f)
-            print(f"Saved passages to {config.passages_file}")
+            print(f"Saved passages to {self.passages_file}")
 
         # 2. Load model for embeddings
-        model = SentenceTransformer(config.embedding_model, device=self.device)
+        model = SentenceTransformer(self.model_name, device=self.device)
         print(f"Using device: {self.device}")
 
         # 3. Compute embeddings in batches
@@ -146,6 +152,6 @@ class Embedder:
         index = faiss.IndexFlatIP(dim) # type: ignore
         index.add(emb_normalized.astype(np.float32))
         faiss.write_index(index, config.faiss_index_file) # type: ignore
-        print(f"Saved FAISS index to {config.faiss_index_file} (dim={dim}, n={len(corpus)})")
+        print(f"Saved FAISS index to {self.faiss_index_file} (dim={dim}, n={len(corpus)})")
 
         return corpus, corpus_embeddings

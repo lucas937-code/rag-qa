@@ -1,7 +1,8 @@
 import sys
 import os
+from abc import ABC
 
-class Config():
+class Config(ABC):
     def __init__(self, 
                  base_dir: str,
                  hf_cache_dir: str,
@@ -55,7 +56,7 @@ class ColabConfig(Config):
                  embeddings_file="corpus_embeddings_unique.pkl",
                  faiss_index_file="corpus_faiss.index",
                  passages_file="corpus_passages.pkl",
-                 embedding_model="all-MiniLM-L6-v2",
+                 embedding_model="BAAI/bge-base-en",
                  rerank_model="cross-encoder/ms-marco-MiniLM-L-6-v2",
                  generator_model="google/flan-t5-large",
                  val_split_size=7900,
@@ -94,7 +95,7 @@ class LocalConfig(Config):
                  embeddings_file="corpus_embeddings_unique.pkl",
                  faiss_index_file="corpus_faiss.index",
                  passages_file="corpus_passages.pkl",
-                 embedding_model="all-MiniLM-L6-v2",
+                 embedding_model="BAAI/bge-base-en",
                  rerank_model="cross-encoder/ms-marco-MiniLM-L-6-v2",
                  generator_model="google/flan-t5-large",
                  val_split_size=7900,
@@ -131,7 +132,7 @@ class OllamaConfig(Config):
                  embeddings_file="corpus_embeddings_unique.pkl",
                  faiss_index_file="corpus_faiss.index",
                  passages_file="corpus_passages.pkl",
-                 embedding_model="all-MiniLM-L6-v2",
+                 embedding_model="BAAI/bge-base-en",
                  generator_model="llama3.1:8b",
                  rerank_model="cross-encoder/ms-marco-MiniLM-L-6-v2",
                  ollama_url="http://127.0.0.1:11434/api/chat",
