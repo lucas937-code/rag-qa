@@ -4,11 +4,24 @@
 python -m venv .venv
 
 1. enter venv
-.venv\bin\activate
+.\.venv\Scripts\activate 
 
-2. open vscode
-code .
+2. install requirements
+pip install -r requirements.txt
 
-3. make sure the csvode jupyter kernel is the correnct .venv folder
+3. pipeline should be runnable.
 
-4. Load the datasets using load.datasets.ipynb
+
+Structure
+rag-qa/
+│
+├── config/
+│   └── paths.py         # Path, detects working directory of colab or local
+│
+├── src/
+│   ├── data.py          # check/download dataset
+│   ├── training.py      # check/train model
+│   ├── evaluate.py
+│   └── utils.py
+│
+└── pipeline.ipynb       

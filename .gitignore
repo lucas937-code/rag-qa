@@ -1,7 +1,10 @@
 .venv/
 
-test_dataset/
-train_dataset/
-validation_dataset/
-
 *.npy
+*.pkl
+*.index
+
+data/
+
+*__pycache__/
+.idea/
