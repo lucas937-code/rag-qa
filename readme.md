@@ -192,3 +192,28 @@ config.generator_model = "google/flan-t5-large"  # or "llama3.1:8b"
 - **Batch Processing**: Configurable batch sizes for embedding computation (default: 512)
 - **Device Optimization**: Automatic CUDA detection with fallback to CPU
 - **FAISS Integration**: Binary index format for fast similarity search at scale
+
+## 📁 Project Structure
+
+```
+rag-qa/
+├── src/                    # Core implementation
+│   ├── config.py          # Configuration management (Local/Colab/Ollama)
+│   ├── embedder.py        # Embedding computation + FAISS indexing
+│   ├── retriever.py       # FAISS-based document retrieval
+│   ├── reranker.py        # Cross-encoder passage reranking
+│   ├── generator.py       # LLM generation (HF + Ollama backends)
+│   ├── data_loader.py     # Streaming data processing + sharding
+│   ├── evaluate_rag_full.py # End-to-end RAG evaluation
+│   ├── evaluate_retrieve.py # Retrieval-only evaluation
+│   ├── analyze_data.py    # Dataset analysis and visualization
+│   ├── explore_data.py    # Data exploration utilities
+│   └── data_prep/         # Dataset loading and preprocessing
+│       └── load_dataset.py # TriviaQA streaming download
+├── pipeline.ipynb         # Main pipeline notebook
+├── plots/                 # Data analysis visualizations
+│   ├── *_question_length_distribution.png
+│   └── *_answer_length_distribution.png
+├── requirements.txt       # Python dependencies
+└── notes.md              # Development notes and ideas
+```
