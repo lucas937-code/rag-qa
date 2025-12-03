@@ -21,7 +21,7 @@ class Generator(ABC):
         self.model_name = config.generator_model
 
     @abstractmethod
-    def generate(self, query: str, passages: list):
+    def generate(self, query: str, passages: list) -> str:
         pass
     
 class HFGenerator(Generator):
