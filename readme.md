@@ -22,10 +22,35 @@ Query → Embedding → FAISS Retrieval → Cross-Encoder Reranking → LLM Gene
 
 ### Core Components
 
-- **Embedder**: `BAAI/bge-base-en` model with FAISS indexing
+- **Embedder**: `BAAI/bge-base-en` model with FAISS indexing (768-dim vectors)
 - **Reranker**: `cross-encoder/ms-marco-MiniLM-L-6-v2` for relevance scoring
 - **Generator**: Configurable between `google/flan-t5-large` (HF) and `llama3.1:8b` (Ollama)
 - **Chunking**: Token-based with 240 tokens per chunk, 60 token overlap
+
+### Technical Implementation Details
+
+#### Data Processing Pipeline
+- **Dataset**: TriviaQA `rc.wikipedia` with streaming download for memory efficiency
+- **Sharded Storage**: Data saved in 1000-example shards for scalable loading
+- **Validation Split**: First 7900 samples from training set used for validation
+- **Passage Extraction**: Entity pages with title-prefixed chunking (`"Title: chunk_content"`)
+
+#### Embedding & Retrieval System
+- **FAISS Index**: Inner Product (IP) search on L2-normalized vectors
+- **Batch Processing**: 512 passages per embedding batch for GPU efficiency
+- **Duplicate Removal**: Python dict-based deduplication preserving order
+- **Caching Strategy**: Separate passage cache and embedding cache for incremental updates
+
+#### Two-Stage Retrieval Architecture
+1. **FAISS Retrieval**: Top 100 candidates using cosine similarity
+2. **Cross-Encoder Reranking**: Relevance scoring on query-passage pairs
+3. **Final Selection**: Top 5 passages passed to generator
+
+#### Generation Strategies
+- **HuggingFace**: Auto-detection of encoder-decoder vs. decoder-only models
+- **Ollama Integration**: RESTful API calls with configurable timeouts
+- **Prompt Engineering**: Context-aware QA prompts with length constraints
+- **Generation Parameters**: Deterministic decoding (no sampling) with 48-token limit
 
 ## 📊 Implementation Decisions
 
@@ -42,19 +67,27 @@ Query → Embedding → FAISS Retrieval → Cross-Encoder Reranking → LLM Gene
 1. **Chunk Size**: 240 tokens with 60 token overlap (25% overlap ratio)
    - Balances context preservation with embedding efficiency
    - Prevents information loss at chunk boundaries
+   - Title prefixing maintains entity context in each chunk
 
-2. **FAISS Indexing**: Enables fast similarity search on ~1M passages
-   - Supports efficient retrieval at scale
-   - Reduces memory footprint compared to brute-force search
+2. **FAISS Indexing**: Inner Product search on L2-normalized vectors
+   - Enables fast similarity search on ~978K passages
+   - Normalization ensures cosine similarity equivalence
+   - Memory-efficient binary format for large-scale deployment
 
-3. **Two-Stage Retrieval**: 
-   - Initial FAISS retrieval (top 100 candidates)
-   - Cross-encoder reranking (top 5 final passages)
-   - Improves accuracy while maintaining performance
+3. **Two-Stage Retrieval Architecture**: 
+   - FAISS retrieval (top 100 candidates) for speed
+   - Cross-encoder reranking (top 5 final passages) for accuracy
+   - Reduces computational cost while maintaining precision
 
-4. **Flexible Configuration System**:
+4. **Streaming Data Processing**:
+   - Memory-efficient handling of large datasets
+   - Sharded storage enables incremental processing
+   - Automatic deduplication prevents redundant embeddings
+
+5. **Flexible Configuration System**:
    - Environment-specific configs (Local/Colab/Ollama)
-   - Easy parameter tuning for experiments
+   - Abstract base classes enable easy model swapping
+   - Device-aware model loading (CUDA/CPU)
 
 ## 🚀 Quick Start
 
@@ -123,15 +156,27 @@ config.generator_model = "google/flan-t5-large"  # or "llama3.1:8b"
 ## 🔬 Evaluation Methods
 
 ### Retrieval Evaluation
-- Top-k accuracy metrics
-- Relevance scoring with cross-encoder
+- **FAISS Performance**: Cosine similarity scoring with normalized vectors
+- **Reranking Effectiveness**: Cross-encoder relevance scoring on query-passage pairs
+- **Top-k Analysis**: Retrieval accuracy at different k values (5, 10, 20, 100)
 
 ### End-to-End RAG Evaluation
-- **Exact Match (EM)**: Strict string matching
-- **F1 Score**: Token-level overlap with normalization:
+- **Exact Match (EM)**: Strict string matching after normalization
+- **F1 Score**: Token-level overlap with comprehensive normalization:
   - Lowercasing and punctuation removal
   - Stop word removal ("a", "an", "the")
   - Whitespace normalization
+- **Evaluation Pipeline**:
+  ```python
+  # Normalization pipeline
+  normalize_answer() → tokenize() → calculate_precision_recall() → compute_f1()
+  ```
+
+### Dataset Splits
+- **Training**: Remaining samples after validation split
+- **Validation**: First 7900 samples from original training set
+- **Test**: TriviaQA validation set (used for final evaluation)
+- **Shard-based Loading**: Enables memory-efficient evaluation on large datasets
 
 ## 🌟 Advanced Features
 
@@ -141,6 +186,9 @@ config.generator_model = "google/flan-t5-large"  # or "llama3.1:8b"
 - Configurable host/port settings
 
 ### Efficient Data Handling
-- Sharded dataset loading for memory efficiency
-- Lazy loading of large embeddings
-- Batch processing for embedding computation
+- **Sharded Dataset Loading**: 1000-example shards for memory efficiency
+- **Streaming Downloads**: TriviaQA dataset processed without full memory loading
+- **Incremental Caching**: Separate passage and embedding caches for flexible updates
+- **Batch Processing**: Configurable batch sizes for embedding computation (default: 512)
+- **Device Optimization**: Automatic CUDA detection with fallback to CPU
+- **FAISS Integration**: Binary index format for fast similarity search at scale
