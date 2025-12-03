@@ -88,7 +88,6 @@ def load_embeddings(config: Config = DEFAULT_CONFIG):
     """
     Load FAISS index + passages. Fail fast if artifacts are missing.
     """
-    global _faiss_index, _faiss_passages
     faiss_index_file = Path(config.faiss_index_file)
     passages_file = Path(config.passages_file)
 
@@ -98,7 +97,6 @@ def load_embeddings(config: Config = DEFAULT_CONFIG):
     with open(passages_file, "rb") as f:
         data = pickle.load(f)
         passages = data["passages"]
-    _faiss_passages = passages
-    _faiss_index = faiss.read_index(str(FAISS_INDEX_FILE)) # type: ignore
+    faiss_index = faiss.read_index(str(faiss_index_file)) # type: ignore
     print(f"🔹 Loaded FAISS index with {len(passages)} passages")
-    return passages, None
+    return passages, faiss_index

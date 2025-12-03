@@ -1,6 +1,6 @@
 import requests
 import torch
-from src.config import Config, OllamaConfig, DEFAULT_CONFIG, LocalConfig, ColabConfig
+from src.config import Config, OllamaConfig, LocalConfig, ColabConfig
 from abc import ABC, abstractmethod
 from transformers import (
     AutoTokenizer,
@@ -18,6 +18,7 @@ class Generator(ABC):
         self.device = "cuda" if torch.cuda.is_available() else "cpu"
         self.max_gen_tokens = max_gen_tokens
         self.max_input_length = max_input_length
+        self.model_name = config.generator_model
 
     @abstractmethod
     def generate(self, query: str, passages: list):
@@ -29,7 +30,6 @@ class HFGenerator(Generator):
                  max_gen_tokens: int = 48,
                  max_input_length: int = 2048):
         super().__init__(config, max_gen_tokens, max_input_length)
-        self.tokenizer, self.gen_model = self._get_generator(config.generator_model, self.device)
 
     def _get_generator(self, gen_model_name: str, device: str):
         cfg = AutoConfig.from_pretrained(gen_model_name, use_fast=True)
@@ -53,7 +53,8 @@ class HFGenerator(Generator):
         return tokenizer, model
 
     def generate(self, query: str, passages: list):
-        if self.tokenizer is None or self.gen_model is None:
+        tokenizer, gen_model = self._get_generator(self.model_name, self.device)
+        if tokenizer is None or gen_model is None:
             raise ValueError("HuggingFace tokenizer or model is not initialized.")
         
         context_block = "\n---\n".join(passages)
@@ -63,22 +64,22 @@ class HFGenerator(Generator):
             f"Context:\n{context_block}\n\nQuestion: {query}\nAnswer:"
         )
 
-        inputs = self.tokenizer(
+        inputs = tokenizer(
             prompt,
             return_tensors="pt",
             max_length=self.max_input_length,
             truncation=True,
-            padding=True).to(self.gen_model.device)
+            padding=True).to(gen_model.device)
         
         with torch.no_grad():
-            output = self.gen_model.generate(
+            output = gen_model.generate(
                 **inputs,
                 max_new_tokens=self.max_gen_tokens,
                 do_sample=False,
-                eos_token_id=self.tokenizer.eos_token_id,
-                pad_token_id=self.tokenizer.pad_token_id)
+                eos_token_id=tokenizer.eos_token_id,
+                pad_token_id=tokenizer.pad_token_id)
             
-        answer = self.tokenizer.decode(output[0], skip_special_tokens=True).strip()
+        answer = tokenizer.decode(output[0], skip_special_tokens=True).strip()
         return answer
     
 class OllamaGenerator(Generator):
@@ -88,7 +89,6 @@ class OllamaGenerator(Generator):
                  max_input_length: int = 2048):
         super().__init__(config, max_gen_tokens, max_input_length)
         self.ollama_url = config.ollama_url
-        self.ollama_model = config.generator_model
 
     def _call_ollama(self, messages: list, max_gen_tokens: int):
         if self.ollama_url is None:
@@ -97,7 +97,7 @@ class OllamaGenerator(Generator):
         resp = requests.post(
         self.ollama_url,
         json={
-            "model": self.ollama_model,
+            "model": self.model_name,
             "messages": messages,
             "stream": False,
             "options": {"num_predict": max_gen_tokens},
