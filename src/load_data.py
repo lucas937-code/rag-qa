@@ -1,6 +1,8 @@
 from datasets import load_dataset, Dataset, DownloadConfig
 import os
 from src.config import Config, DEFAULT_CONFIG
+from datasets import load_from_disk, concatenate_datasets
+from tqdm import tqdm
 
 def save_shard(buffer, base_dir, idx):
     shard_dir = os.path.join(base_dir, f"shard_{idx}")
@@ -77,3 +79,23 @@ def ensure_data_available(config: Config = DEFAULT_CONFIG):
 
     print("⬇ Downloading TriviaQA streaming dataset...")
     download_and_prepare_data(config)
+
+# ======================================================
+# Load dataset shards
+# ======================================================
+def load_all_shards(base_dir: str, shards_prefix: str, sample_limit: int):
+    shards = sorted([
+        os.path.join(base_dir, d)
+        for d in os.listdir(base_dir)
+        if d.startswith(shards_prefix)
+    ])
+
+    if not shards:
+        raise RuntimeError(f"⚠ No shards found in: {base_dir}")
+
+    datasets = []
+    for shard in tqdm(shards, desc=f"Loading {base_dir}"):
+        datasets.append(load_from_disk(shard))
+
+    dataset = concatenate_datasets(datasets)
+    return dataset.select(range(min(sample_limit, len(dataset))))

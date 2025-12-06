@@ -1,13 +1,11 @@
-import os
 import pickle
 import torch
 import numpy as np
 from pathlib import Path
 from tqdm import tqdm
-from datasets import load_from_disk, concatenate_datasets
 from sentence_transformers import SentenceTransformer, CrossEncoder
-from sklearn.metrics.pairwise import cosine_similarity
 from src.config import Config, DEFAULT_CONFIG
+from src.load_data import load_all_shards
 
 # Optional FAISS import
 try:
@@ -17,10 +15,6 @@ except ImportError:
     FAISS_AVAILABLE = False
 
 
-# ======================================================
-# Configuration
-# ======================================================
-TOP_K_VALUES = [1, 3, 5, 7, 10]
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 
 
@@ -41,27 +35,6 @@ def load_embeddings(config: Config):
     index = faiss.read_index(str(faiss_index_file)) # type: ignore
     print(f"🔹 Loaded FAISS index with {len(passages)} passages")
     return passages, None, index
-
-
-# ======================================================
-# Load dataset shards
-# ======================================================
-def load_all_shards(base_dir: str, shards_prefix: str, sample_limit: int):
-    shards = sorted([
-        os.path.join(base_dir, d)
-        for d in os.listdir(base_dir)
-        if d.startswith(shards_prefix)
-    ])
-
-    if not shards:
-        raise RuntimeError(f"⚠ No shards found in: {base_dir}")
-
-    datasets = []
-    for shard in tqdm(shards, desc=f"Loading {base_dir}"):
-        datasets.append(load_from_disk(shard))
-
-    dataset = concatenate_datasets(datasets)
-    return dataset.select(range(min(sample_limit, len(dataset))))
 
 
 # ======================================================
@@ -115,7 +88,7 @@ def run_evaluation(config: Config,
     model = SentenceTransformer(config.embedding_model, device=DEVICE)
     reranker = CrossEncoder(config.rerank_model, device=DEVICE)
 
-    for name, path in data_dirs.items():
+    for name, path in data_dirs:
         print(f"\n=== 🔥 Evaluating {name.upper()} — first {sample_limit} samples ===")
         dataset = load_all_shards(path, config.shard_prefix, sample_limit)
 

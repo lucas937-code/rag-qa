@@ -168,29 +168,8 @@ def compute_embeddings(
     return corpus, corpus_embeddings
 
 # ------------------------------
-# Retrieval function
-# ------------------------------
-def retrieve_top_k(query, corpus, corpus_embeddings, config: Config, device=DEVICE, top_k=3):
-    """
-    Fallback retrieval using in-memory embeddings (cosine similarity).
-    """
-    model = SentenceTransformer(config.embedding_model, device=device)
-    query_embedding = model.encode([query], convert_to_numpy=True, device=device)
-    sims = cosine_similarity(query_embedding, corpus_embeddings)
-    top_idx = np.argsort(-sims[0])[:top_k]
-    results = [corpus[i] for i in top_idx]
-    return results, sims[0][top_idx]
-
-# ------------------------------
 # Entry point for script
 # ------------------------------
 if __name__ == "__main__":
     config = LocalConfig(embedding_model="BAAI/bge-base-en", base_dir="/mnt/c/dev/ml/rag-qa")
     corpus, corpus_embeddings = compute_embeddings(config, force_recompute=True, recompute_passages=False)
-    if corpus is not None and corpus_embeddings is not None:
-        # Example test retrieval
-        query = "What is the top prize at the Cannes Film Festival?"
-        results, scores = retrieve_top_k(query, corpus, corpus_embeddings, config)
-        print("\nTop retrieved passages:")
-        for passage, score in zip(results, scores):
-            print(f"[score: {score:.4f}] {passage}\n---")
