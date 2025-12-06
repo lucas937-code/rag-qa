@@ -105,17 +105,17 @@ def evaluate_recall(model, corpus, embeddings, dataset, candidates, top_k, faiss
 # ======================================================
 # ORCHESTRATION FUNCTION
 # ======================================================
-def run_evaluation(config: Config = DEFAULT_CONFIG, sample_limit=100, candidates=100, top_k=3):
-    DATA_DIRS = {
-        "train": config.train_dir,
-        "validation": config.val_dir,
-        "test": config.test_dir
-    }
+def run_evaluation(config: Config,
+                   sample_limit=100,
+                   candidates=100,
+                   top_k=(1,3,5,10),
+                   data_dirs=None):
+    data_dirs = (config.train_dir, config.val_dir, config.test_dir) if data_dirs is None else data_dirs
     corpus, emb, faiss_index = load_embeddings(config)
     model = SentenceTransformer(config.embedding_model, device=DEVICE)
     reranker = CrossEncoder(config.rerank_model, device=DEVICE)
 
-    for name, path in DATA_DIRS.items():
+    for name, path in data_dirs.items():
         print(f"\n=== 🔥 Evaluating {name.upper()} — first {sample_limit} samples ===")
         dataset = load_all_shards(path, config.shard_prefix, sample_limit)
 
@@ -125,4 +125,4 @@ def run_evaluation(config: Config = DEFAULT_CONFIG, sample_limit=100, candidates
 
 
 if __name__ == "__main__":
-    run_evaluation()
+    run_evaluation(DEFAULT_CONFIG)
