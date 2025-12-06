@@ -1,5 +1,6 @@
 import sys
 import os
+from pathlib import Path
 from abc import ABC
 
 class Config(ABC):
@@ -41,7 +42,7 @@ class Config(ABC):
 
 class ColabConfig(Config):
     def __init__(self,
-                 base_dir="/content/drive/MyDrive/rag-matthias",
+                 base_dir="/content/drive/MyDrive/rag-qa",
                  hf_cache_dir=".hf_cache",
                  data_dir="data",
                  train_dir="train",
@@ -74,7 +75,7 @@ class ColabConfig(Config):
 
 class LocalConfig(Config):
     def __init__(self,
-                 base_dir=os.getcwd(),
+                 base_dir=Path(os.getcwd()).resolve().parent,
                  hf_cache_dir=".hf_cache",
                  data_dir="data",
                  train_dir="train",
@@ -105,7 +106,7 @@ class LocalConfig(Config):
 
 class OllamaConfig(Config):
     def __init__(self,
-                 base_dir=os.getcwd(),
+                 base_dir=Path(os.getcwd()).resolve().parent,
                  hf_cache_dir=".hf_cache",
                  data_dir="data",
                  train_dir="train",
