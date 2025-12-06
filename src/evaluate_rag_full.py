@@ -13,8 +13,11 @@ from datasets import load_from_disk, concatenate_datasets
 from tqdm import tqdm
 
 from src.config import Config, DEFAULT_CONFIG
-from src.generator import Generator
-from src.load_data import load_embeddings
+from src.generator import (
+    load_embeddings,           # your FAISS + passages loader
+    generate_answer_combined,  # your retrieval + generation
+)
+from src.retriever import Retriever
 
 # ======================== LOAD TEST SHARDS ======================== #
 def load_test_100(config: Config, max_questions: int):
@@ -78,17 +81,16 @@ def run_full_rag_eval(config: Config = DEFAULT_CONFIG,
     em_results, f1_results = [], []
     output_log = []
 
-    generator = Generator()
-
     print("\n=== Running RAG Evaluation ===")
+    retriever = Retriever()
     for ex in tqdm(test):
         q = ex["question"]
         gold = ex["answer"]["normalized_value"]
         aliases = ex["answer"]["normalized_aliases"] + [gold]
 
         # RAG: retrieval + generation (uses FAISS + reranker + generator from src.generator)
-        pred, retrieved = generator.generate_answer_combined(
-            q,
+        pred, retrieved = generate_answer_combined(
+            q, retriever,
             corpus,
             emb,
             top_k=top_k,
