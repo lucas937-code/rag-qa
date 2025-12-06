@@ -160,4 +160,4 @@ if __name__ == "__main__":
         print(f"{i+1}. {p[:200].replace(chr(10),' ')}...")
 
     print("\nGenerated Answer:")
-    print(generate_answer_combined(q, corpus, emb, top_k=5)[0])
+    print(generate_answer_combined(q, corpus, retriever, emb, top_k=5)[0])

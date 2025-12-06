@@ -5,7 +5,6 @@ from tqdm import tqdm
 import torch
 from datasets import load_from_disk, concatenate_datasets
 from sentence_transformers import SentenceTransformer
-from sklearn.metrics.pairwise import cosine_similarity
 from src.config import Config, DEFAULT_CONFIG, LocalConfig
 
 # Optional FAISS import
@@ -80,6 +79,9 @@ def extract_passages(dataset, tokenizer, chunk_tokens, chunk_overlap):
 # ------------------------------
 def compute_embeddings(
     config: Config,
+    chunk_tokens=240,
+    chunk_overlap=60,
+    embeddings_batch_size=512,
     force_recompute=False,
     recompute_passages=False,
     data_dirs=None,
@@ -122,7 +124,7 @@ def compute_embeddings(
         print(f"Using device: {DEVICE}")
 
         # 3. Extract passages (token-based chunking)
-        corpus = extract_passages(dataset, tokenizer, chunk_tokens=config.chunk_tokens, chunk_overlap=config.chunk_overlap)
+        corpus = extract_passages(dataset, tokenizer, chunk_tokens=chunk_tokens, chunk_overlap=chunk_overlap)
         
         # 4. Remove duplicates
         before = len(corpus)
@@ -141,8 +143,8 @@ def compute_embeddings(
 
     # 3. Compute embeddings in batches
     corpus_embeddings = []
-    for i in tqdm(range(0, len(corpus), config.embeddings_batch_size), desc="Computing embeddings"):
-        batch = corpus[i:i+config.embeddings_batch_size]
+    for i in tqdm(range(0, len(corpus), embeddings_batch_size), desc="Computing embeddings"):
+        batch = corpus[i:i+embeddings_batch_size]
         emb = model.encode(batch, convert_to_numpy=True, device=DEVICE)
         corpus_embeddings.append(emb)
     corpus_embeddings = np.vstack(corpus_embeddings)

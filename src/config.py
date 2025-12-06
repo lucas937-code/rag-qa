@@ -17,10 +17,7 @@ class Config(ABC):
                  rerank_model: str,
                  generator_model: str,
                  val_split_size: int,
-                 shard_batch_size: int,
-                 chunk_tokens: int,
-                 chunk_overlap: int,
-                 embeddings_batch_size: int) -> None:
+                 shard_batch_size: int) -> None:
         self.base_dir = base_dir
         self.hf_cache_dir = os.path.join(self.base_dir, hf_cache_dir)
         self.data_dir     = os.path.join(self.base_dir, data_dir)
@@ -36,9 +33,6 @@ class Config(ABC):
         self.shard_prefix = "shard_"
         self.val_split_size = val_split_size
         self.shard_batch_size = shard_batch_size
-        self.chunk_tokens = chunk_tokens
-        self.chunk_overlap = chunk_overlap
-        self.embeddings_batch_size = embeddings_batch_size
 
     def ensure_dirs(self):
         for p in [self.hf_cache_dir, self.data_dir, self.train_dir, self.val_dir, self.test_dir]:
@@ -60,10 +54,7 @@ class ColabConfig(Config):
                  rerank_model="cross-encoder/ms-marco-MiniLM-L-6-v2",
                  generator_model="google/flan-t5-large",
                  val_split_size=7900,
-                 shard_batch_size=1000,
-                 chunk_tokens=240,
-                 chunk_overlap=60,
-                 embeddings_batch_size=512) -> None:
+                 shard_batch_size=1000) -> None:
         from google.colab import drive # type: ignore
         drive.mount("/content/drive")
         super().__init__(base_dir=base_dir,
@@ -79,10 +70,7 @@ class ColabConfig(Config):
                          rerank_model=rerank_model,
                          generator_model=generator_model,
                          val_split_size=val_split_size,
-                         shard_batch_size=shard_batch_size,
-                         chunk_tokens=chunk_tokens,
-                         chunk_overlap=chunk_overlap,
-                         embeddings_batch_size=embeddings_batch_size)
+                         shard_batch_size=shard_batch_size)
 
 class LocalConfig(Config):
     def __init__(self,
@@ -99,10 +87,7 @@ class LocalConfig(Config):
                  rerank_model="cross-encoder/ms-marco-MiniLM-L-6-v2",
                  generator_model="google/flan-t5-large",
                  val_split_size=7900,
-                 shard_batch_size=1000,
-                 chunk_tokens=240,
-                 chunk_overlap=60,
-                 embeddings_batch_size=512) -> None:
+                 shard_batch_size=1000) -> None:
         super().__init__(base_dir=base_dir,
                          hf_cache_dir=hf_cache_dir,
                          data_dir=data_dir,
@@ -116,10 +101,7 @@ class LocalConfig(Config):
                          rerank_model=rerank_model,
                          generator_model=generator_model,
                          val_split_size=val_split_size,
-                         shard_batch_size=shard_batch_size,
-                         chunk_tokens=chunk_tokens,
-                         chunk_overlap=chunk_overlap,
-                         embeddings_batch_size=embeddings_batch_size)
+                         shard_batch_size=shard_batch_size)
 
 class OllamaConfig(Config):
     def __init__(self,
@@ -137,10 +119,7 @@ class OllamaConfig(Config):
                  rerank_model="cross-encoder/ms-marco-MiniLM-L-6-v2",
                  ollama_url="http://127.0.0.1:11434/api/chat",
                  val_split_size=7900,
-                 shard_batch_size=1000,
-                 chunk_tokens=240,
-                 chunk_overlap=60,
-                 embeddings_batch_size=512) -> None:
+                 shard_batch_size=1000) -> None:
         super().__init__(base_dir=base_dir,
                          hf_cache_dir=hf_cache_dir,
                          data_dir=data_dir,
@@ -154,10 +133,7 @@ class OllamaConfig(Config):
                          rerank_model=rerank_model,
                          generator_model=generator_model,
                          val_split_size=val_split_size,
-                         shard_batch_size=shard_batch_size,
-                         chunk_tokens=chunk_tokens,
-                         chunk_overlap=chunk_overlap,
-                         embeddings_batch_size=embeddings_batch_size)
+                         shard_batch_size=shard_batch_size)
         self.ollama_url = ollama_url
     
 
