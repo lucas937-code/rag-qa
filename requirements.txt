@@ -5,3 +5,8 @@ scikit-learn
 numpy
 faiss-cpu
 ipykernel
+requests
+torch
+transformers
+tqdm
+pandas

@@ -1,38 +1,48 @@
 import sys
 import os
+from pathlib import Path
+from abc import ABC
 
-class Config():
+class Config(ABC):
     def __init__(self, 
                  base_dir: str,
-                 hf_cache_dir=".hf_cache",
-                 data_dir="data",
-                 train_dir="train",
-                 val_dir="validation",
-                 test_dir="test",
-                 embeddings_file="corpus_embeddings_unique.pkl",
-                 faiss_index_file="corpus_faiss.index",
-                 passages_file="corpus_passages.pkl",
-                 embedding_model="all-MiniLM-L6-v2") -> None:
-        self.BASE_DIR = base_dir
-        self.HF_CACHE_DIR = os.path.join(self.BASE_DIR, hf_cache_dir)
-        self.DATA_DIR     = os.path.join(self.BASE_DIR, data_dir)
-        self.TRAIN_DIR    = os.path.join(self.DATA_DIR, train_dir)
-        self.VAL_DIR      = os.path.join(self.DATA_DIR, val_dir)
-        self.TEST_DIR     = os.path.join(self.DATA_DIR, test_dir)
-        self.EMBEDDINGS_FILE = os.path.join(self.BASE_DIR, embeddings_file)
-        self.FAISS_INDEX_FILE = os.path.join(self.BASE_DIR, faiss_index_file)
-        self.PASSAGES_FILE =  os.path.join(self.BASE_DIR, passages_file)
-        self.EMBEDDING_MODEL = embedding_model
-        self.SHARD_PREFIX = "shard_"
+                 hf_cache_dir: str,
+                 data_dir: str,
+                 train_dir: str,
+                 val_dir: str,
+                 test_dir: str,
+                 embeddings_file: str,
+                 faiss_index_file: str,
+                 passages_file: str,
+                 embedding_model: str,
+                 rerank_model: str,
+                 generator_model: str,
+                 val_split_size: int,
+                 shard_batch_size: int) -> None:
+        self.base_dir = base_dir
+        self.hf_cache_dir = os.path.join(self.base_dir, hf_cache_dir)
+        self.data_dir     = os.path.join(self.base_dir, data_dir)
+        self.train_dir    = os.path.join(self.data_dir, train_dir)
+        self.val_dir      = os.path.join(self.data_dir, val_dir)
+        self.test_dir     = os.path.join(self.data_dir, test_dir)
+        self.embeddings_file = os.path.join(self.data_dir, embeddings_file)
+        self.faiss_index_file = os.path.join(self.data_dir, faiss_index_file)
+        self.passages_file =  os.path.join(self.data_dir, passages_file)
+        self.embedding_model = embedding_model
+        self.rerank_model = rerank_model
+        self.generator_model = generator_model
+        self.shard_prefix = "shard_"
+        self.val_split_size = val_split_size
+        self.shard_batch_size = shard_batch_size
 
     def ensure_dirs(self):
-        for p in [self.HF_CACHE_DIR, self.DATA_DIR, self.TRAIN_DIR, self.VAL_DIR, self.TEST_DIR]:
+        for p in [self.hf_cache_dir, self.data_dir, self.train_dir, self.val_dir, self.test_dir]:
             os.makedirs(p, exist_ok=True)
             print(f"✅ Ensured directory exists: {p}")
 
 class ColabConfig(Config):
     def __init__(self,
-                 base_dir="/content/drive/MyDrive/rag-matthias",
+                 base_dir="/content/drive/MyDrive/rag-qa",
                  hf_cache_dir=".hf_cache",
                  data_dir="data",
                  train_dir="train",
@@ -41,7 +51,11 @@ class ColabConfig(Config):
                  embeddings_file="corpus_embeddings_unique.pkl",
                  faiss_index_file="corpus_faiss.index",
                  passages_file="corpus_passages.pkl",
-                 embedding_model="all-MiniLM-L6-v2") -> None:
+                 embedding_model="BAAI/bge-base-en",
+                 rerank_model="cross-encoder/ms-marco-MiniLM-L-6-v2",
+                 generator_model="google/flan-t5-large",
+                 val_split_size=7900,
+                 shard_batch_size=1000) -> None:
         from google.colab import drive # type: ignore
         drive.mount("/content/drive")
         super().__init__(base_dir=base_dir,
@@ -53,11 +67,15 @@ class ColabConfig(Config):
                          embeddings_file=embeddings_file,
                          faiss_index_file=faiss_index_file,
                          passages_file=passages_file,
-                         embedding_model=embedding_model)
+                         embedding_model=embedding_model,
+                         rerank_model=rerank_model,
+                         generator_model=generator_model,
+                         val_split_size=val_split_size,
+                         shard_batch_size=shard_batch_size)
 
 class LocalConfig(Config):
     def __init__(self,
-                 base_dir=os.getcwd(),
+                 base_dir=Path(os.getcwd()).resolve().parent,
                  hf_cache_dir=".hf_cache",
                  data_dir="data",
                  train_dir="train",
@@ -66,7 +84,11 @@ class LocalConfig(Config):
                  embeddings_file="corpus_embeddings_unique.pkl",
                  faiss_index_file="corpus_faiss.index",
                  passages_file="corpus_passages.pkl",
-                 embedding_model="all-MiniLM-L6-v2") -> None:
+                 embedding_model="BAAI/bge-base-en",
+                 rerank_model="cross-encoder/ms-marco-MiniLM-L-6-v2",
+                 generator_model="google/flan-t5-large",
+                 val_split_size=7900,
+                 shard_batch_size=1000) -> None:
         super().__init__(base_dir=base_dir,
                          hf_cache_dir=hf_cache_dir,
                          data_dir=data_dir,
@@ -76,11 +98,15 @@ class LocalConfig(Config):
                          embeddings_file=embeddings_file,
                          faiss_index_file=faiss_index_file,
                          passages_file=passages_file,
-                         embedding_model=embedding_model)
+                         embedding_model=embedding_model,
+                         rerank_model=rerank_model,
+                         generator_model=generator_model,
+                         val_split_size=val_split_size,
+                         shard_batch_size=shard_batch_size)
 
 class OllamaConfig(Config):
     def __init__(self,
-                 base_dir=os.getcwd(),
+                 base_dir=Path(os.getcwd()).resolve().parent,
                  hf_cache_dir=".hf_cache",
                  data_dir="data",
                  train_dir="train",
@@ -89,9 +115,12 @@ class OllamaConfig(Config):
                  embeddings_file="corpus_embeddings_unique.pkl",
                  faiss_index_file="corpus_faiss.index",
                  passages_file="corpus_passages.pkl",
-                 embedding_model="all-MiniLM-L6-v2",
+                 embedding_model="BAAI/bge-base-en",
+                 generator_model="llama3.1:8b",
+                 rerank_model="cross-encoder/ms-marco-MiniLM-L-6-v2",
                  ollama_url="http://127.0.0.1:11434/api/chat",
-                 ollama_model="llama3.1:8b") -> None:
+                 val_split_size=7900,
+                 shard_batch_size=1000) -> None:
         super().__init__(base_dir=base_dir,
                          hf_cache_dir=hf_cache_dir,
                          data_dir=data_dir,
@@ -101,9 +130,12 @@ class OllamaConfig(Config):
                          embeddings_file=embeddings_file,
                          faiss_index_file=faiss_index_file,
                          passages_file=passages_file,
-                         embedding_model=embedding_model)
-        self.OLLAMA_URL = ollama_url
-        self.OLLAMA_MODEL = ollama_model
+                         embedding_model=embedding_model,
+                         rerank_model=rerank_model,
+                         generator_model=generator_model,
+                         val_split_size=val_split_size,
+                         shard_batch_size=shard_batch_size)
+        self.ollama_url = ollama_url
     
 
 def is_colab():
