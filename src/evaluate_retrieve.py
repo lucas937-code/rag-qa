@@ -88,8 +88,8 @@ def run_evaluation(config: Config,
     model = SentenceTransformer(config.embedding_model, device=DEVICE)
     reranker = CrossEncoder(config.rerank_model, device=DEVICE)
 
-    for name, path in data_dirs:
-        print(f"\n=== 🔥 Evaluating {name.upper()} — first {sample_limit} samples ===")
+    for path in data_dirs:
+        print(f"\n=== 🔥 Evaluating {path} — first {sample_limit} samples ===")
         dataset = load_all_shards(path, config.shard_prefix, sample_limit)
 
         results = evaluate_recall(model, corpus, emb, dataset, candidates, top_k, faiss_index, reranker)
