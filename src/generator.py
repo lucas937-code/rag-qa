@@ -1,7 +1,7 @@
 import requests
 import torch
 from src.config import Config, OllamaConfig, DEFAULT_CONFIG
-from src.retriever import retrieve_top_k
+from src.retriever import Retriever
 from src.load_data import load_embeddings
 from transformers import (
     AutoTokenizer,
@@ -84,7 +84,8 @@ def call_ollama(messages, ollama_url, model, max_new_tokens=MAX_GEN_TOKENS):
 # Generate answer from combined top-K context
 # ==============================
 def generate_answer_combined_ollama(query, corpus, embeddings, config: OllamaConfig, top_k=5):
-    top_passages, _ = retrieve_top_k(query, corpus, embeddings, config.embedding_model, config.rerank_model, k=top_k)
+    retriever = Retriever()
+    top_passages, _ = retriever.retrieve_top_k(query, corpus, embeddings, config.embedding_model, config.rerank_model, k=top_k)
     context_block = "\n---\n".join(top_passages)
 
     # Simple text prompt for Flan-T5 (no chat template)
@@ -106,11 +107,12 @@ def generate_answer_combined_ollama(query, corpus, embeddings, config: OllamaCon
     return answer, top_passages
 
 def generate_answer_combined_hf(query, corpus, embeddings, top_k=5, config: Config = DEFAULT_CONFIG):
+    retriever = Retriever()
     tokenizer, model = get_generator(config.generator_model)
     if tokenizer is None or model is None:
         raise RuntimeError("Generator model or tokenizer not loaded.")
 
-    top_passages, _ = retrieve_top_k(query, corpus, embeddings, config.embedding_model, config.rerank_model, k=top_k)
+    top_passages, _ = retriever.retrieve_top_k(query, corpus, embeddings, config.embedding_model, config.rerank_model, k=top_k)
     context_block = "\n---\n".join(top_passages)
 
     # Simple text prompt for Flan-T5 (no chat template)
@@ -153,7 +155,8 @@ if __name__ == "__main__":
     corpus, emb = load_embeddings()
     q = "The medical condition glaucoma affects which part of the body?"
 
-    passages, _ = retrieve_top_k(q, corpus, emb, DEFAULT_CONFIG.embedding_model, DEFAULT_CONFIG.rerank_model, k=3)
+    retriever = Retriever()
+    passages, _ = retriever.retrieve_top_k(q, corpus, emb, DEFAULT_CONFIG.embedding_model, DEFAULT_CONFIG.rerank_model, k=3)
     print("\nRetrieved passages:")
     for i, p in enumerate(passages):
         print(f"{i+1}. {p[:200].replace(chr(10),' ')}...")
