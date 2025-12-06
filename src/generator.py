@@ -4,7 +4,7 @@ import torch
 import numpy as np
 from pathlib import Path
 from src.config import Config, OllamaConfig, DEFAULT_CONFIG
-from src.retriever import get_embedder, get_reranker
+from src.retriever import retrieve_top_k
 from transformers import (
     AutoTokenizer,
     AutoModelForCausalLM,
@@ -50,7 +50,7 @@ def load_embeddings(config: Config = DEFAULT_CONFIG):
     _faiss_passages = passages
     _faiss_index = faiss.read_index(str(FAISS_INDEX_FILE)) # type: ignore
     print(f"🔹 Loaded FAISS index with {len(passages)} passages")
-    return passages, None
+    return passages, _faiss_index
 
 
 # ==============================
@@ -96,29 +96,6 @@ def get_generator(model_name: str):
         _gen_model.eval()
 
     return _tokenizer, _gen_model
-
-
-# ==============================
-# Retrieve passages
-# ==============================
-def retrieve_top_k(query, corpus, embeddings, emb_model_name, reranker_model_name, candidates=100, k=3):
-    if _faiss_index is None:
-        raise RuntimeError("FAISS index not loaded. Call load_embeddings() first.")
-
-    embed_model = get_embedder(emb_model_name)
-    q_emb = embed_model.encode([query], convert_to_numpy=True)
-    norm = np.linalg.norm(q_emb, axis=1, keepdims=True)
-    norm[norm == 0] = 1e-10
-    q_norm = (q_emb / norm).astype(np.float32)
-    scores, idx = _faiss_index.search(q_norm, candidates)
-    candidates_idx = idx[0]
-
-    reranker = get_reranker(reranker_model_name)
-    pairs = [(query, corpus[i]) for i in candidates_idx]
-    rerank_scores = reranker.predict(pairs)
-    order = np.argsort(-rerank_scores)
-    top_idx = candidates_idx[order][:k]
-    return [corpus[i] for i in top_idx], rerank_scores[order][:k]
 
 
 # ==============================
