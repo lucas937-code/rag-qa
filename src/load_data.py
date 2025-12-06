@@ -3,6 +3,17 @@ import os
 from src.config import Config, DEFAULT_CONFIG
 from datasets import load_from_disk, concatenate_datasets
 from tqdm import tqdm
+import pickle
+from pathlib import Path
+
+
+# Optional FAISS import
+try:
+    import faiss  # type: ignore
+    FAISS_AVAILABLE = True
+except ImportError:
+    FAISS_AVAILABLE = False
+
 
 def save_shard(buffer, base_dir, idx):
     shard_dir = os.path.join(base_dir, f"shard_{idx}")
@@ -99,3 +110,32 @@ def load_all_shards(base_dir: str, shards_prefix: str, sample_limit: int):
 
     dataset = concatenate_datasets(datasets)
     return dataset.select(range(min(sample_limit, len(dataset))))
+
+
+_faiss_index = None
+_faiss_passages = None
+
+# ==============================
+# Load embeddings / index
+# ==============================
+def load_embeddings(config: Config = DEFAULT_CONFIG):
+    """
+    Load FAISS index + passages. Fail fast if artifacts are missing.
+    """
+    global _faiss_index, _faiss_passages
+    faiss_index_file = Path(config.faiss_index_file)
+    passages_file = Path(config.passages_file)
+
+    if not FAISS_AVAILABLE:
+        raise ImportError("faiss is required. Install faiss-cpu and build the index via compute_embeddings.")
+
+    if not (faiss_index_file.exists() and passages_file.exists()):
+        raise FileNotFoundError("FAISS index/passages missing. Run src.compute_embeddings to build them.")
+
+    with open(passages_file, "rb") as f:
+        data = pickle.load(f)
+        passages = data["passages"]
+    _faiss_passages = passages
+    _faiss_index = faiss.read_index(str(faiss_index_file)) # type: ignore
+    print(f"🔹 Loaded FAISS index with {len(passages)} passages")
+    return passages, _faiss_index

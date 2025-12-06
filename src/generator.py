@@ -1,23 +1,14 @@
-import pickle
 import requests
 import torch
-import numpy as np
-from pathlib import Path
 from src.config import Config, OllamaConfig, DEFAULT_CONFIG
 from src.retriever import retrieve_top_k
+from src.load_data import load_embeddings
 from transformers import (
     AutoTokenizer,
     AutoModelForCausalLM,
     AutoModelForSeq2SeqLM,
     AutoConfig,
 )
-
-# Optional FAISS import
-try:
-    import faiss  # type: ignore
-    FAISS_AVAILABLE = True
-except ImportError:
-    FAISS_AVAILABLE = False
 
 # ==============================
 # Config
@@ -28,39 +19,11 @@ MAX_INPUT_LENGTH = 2048
 
 
 # ==============================
-# Load embeddings / index
-# ==============================
-def load_embeddings(config: Config = DEFAULT_CONFIG):
-    """
-    Load FAISS index + passages. Fail fast if artifacts are missing.
-    """
-    global _faiss_index, _faiss_passages
-    FAISS_INDEX_FILE = Path(config.faiss_index_file)
-    PASSAGES_FILE = Path(config.passages_file)
-
-    if not FAISS_AVAILABLE:
-        raise ImportError("faiss is required. Install faiss-cpu and build the index via compute_embeddings.")
-
-    if not (FAISS_INDEX_FILE.exists() and PASSAGES_FILE.exists()):
-        raise FileNotFoundError("FAISS index/passages missing. Run src.compute_embeddings to build them.")
-
-    with open(PASSAGES_FILE, "rb") as f:
-        data = pickle.load(f)
-        passages = data["passages"]
-    _faiss_passages = passages
-    _faiss_index = faiss.read_index(str(FAISS_INDEX_FILE)) # type: ignore
-    print(f"🔹 Loaded FAISS index with {len(passages)} passages")
-    return passages, _faiss_index
-
-
-# ==============================
 # Init models / index (lazy-loaded)
 # ==============================
 
 _gen_model = None
 _tokenizer = None
-_faiss_index = None
-_faiss_passages = None
 
 def get_generator(model_name: str):
     global _gen_model, _tokenizer
