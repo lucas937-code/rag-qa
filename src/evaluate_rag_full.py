@@ -8,9 +8,7 @@ import json
 import numpy as np
 import re
 import string
-from pathlib import Path
 
-import torch
 from datasets import load_from_disk, concatenate_datasets
 from tqdm import tqdm
 
@@ -20,20 +18,16 @@ from src.generator import (
     generate_answer_combined,  # your retrieval + generation
 )
 
-# ============================= CONFIG ============================= #
-MAX_QUESTIONS   = 100
-TOP_K           = 5          # top K passages fed to generator
-
 # ======================== LOAD TEST SHARDS ======================== #
-def load_test_100(config: Config, max_questions: int = MAX_QUESTIONS):
+def load_test_100(config: Config, max_questions: int):
     shards = sorted([
-        os.path.join(config.TEST_DIR, d)
-        for d in os.listdir(config.TEST_DIR)
-        if d.startswith(DEFAULT_CONFIG.SHARD_PREFIX)
+        os.path.join(config.test_dir, d)
+        for d in os.listdir(config.test_dir)
+        if d.startswith(DEFAULT_CONFIG.shard_prefix)
     ])
 
     if not shards:
-        raise RuntimeError(f"⚠ No shards found in {config.TEST_DIR}")
+        raise RuntimeError(f"⚠ No shards found in {config.test_dir}")
 
     ds = concatenate_datasets([load_from_disk(sh) for sh in shards])
     return ds.select(range(min(max_questions, len(ds))))
@@ -74,7 +68,8 @@ def f1_score(pred: str, gold: str) -> float:
 
 # =============================== MAIN =============================== #
 def run_full_rag_eval(config: Config = DEFAULT_CONFIG,
-                      max_questions: int = MAX_QUESTIONS,
+                      max_questions: int = 100,
+                      top_k=3,
                       save_file: str | None = None):
     print("\n=== Loading embeddings / FAISS index ===")
     corpus, emb = load_embeddings(config=config)   # emb can be None, we use FAISS inside
@@ -96,7 +91,7 @@ def run_full_rag_eval(config: Config = DEFAULT_CONFIG,
             q,
             corpus,
             emb,
-            top_k=TOP_K,
+            top_k=top_k,
             config=config,
         )
 

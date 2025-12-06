@@ -20,21 +20,17 @@ except ImportError:
 # ======================================================
 # Configuration
 # ======================================================
-SHARD_PREFIX = "shard_"
 TOP_K_VALUES = [1, 3, 5, 7, 10]
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
-DEV_LIMIT = 1000   # number of samples used per split for evaluation
-FAISS_CANDIDATES = 50  # number of initial candidates pulled from FAISS
-RERANK_MODEL_NAME = "cross-encoder/ms-marco-MiniLM-L-6-v2"
 
 
 # ======================================================
 # Load embeddings / index
 # ======================================================
 def load_embeddings(config: Config):
-    embeddings_file = Path(config.EMBEDDINGS_FILE)
-    faiss_index_file = Path(config.FAISS_INDEX_FILE)
-    passages_file = Path(config.PASSAGES_FILE)
+    embeddings_file = Path(config.embeddings_file)
+    faiss_index_file = Path(config.faiss_index_file)
+    passages_file = Path(config.passages_file)
     if not FAISS_AVAILABLE:
         raise ImportError("faiss is required. Install faiss-cpu and build the index via compute_embeddings.")
     if not (faiss_index_file.exists() and passages_file.exists()):
@@ -50,11 +46,11 @@ def load_embeddings(config: Config):
 # ======================================================
 # Load dataset shards
 # ======================================================
-def load_all_shards(base_dir):
+def load_all_shards(base_dir: str, shards_prefix: str, sample_limit: int):
     shards = sorted([
         os.path.join(base_dir, d)
         for d in os.listdir(base_dir)
-        if d.startswith(SHARD_PREFIX)
+        if d.startswith(shards_prefix)
     ])
 
     if not shards:
@@ -65,15 +61,15 @@ def load_all_shards(base_dir):
         datasets.append(load_from_disk(shard))
 
     dataset = concatenate_datasets(datasets)
-    return dataset.select(range(min(DEV_LIMIT, len(dataset))))
+    return dataset.select(range(min(sample_limit, len(dataset))))
 
 
 # ======================================================
 # Compute Recall@K
 # ======================================================
-def evaluate_recall(model, corpus, embeddings, dataset, top_k_values, faiss_index=None, reranker=None):
-    recalls = {k: [] for k in top_k_values}
-    top_candidates = max(FAISS_CANDIDATES, max(top_k_values))
+def evaluate_recall(model, corpus, embeddings, dataset, candidates, top_k, faiss_index=None, reranker=None):
+    recalls = {k: [] for k in top_k}
+    top_candidates = max(candidates, max(top_k))
 
     for ex in tqdm(dataset, desc="Evaluating Recall"):
         question = ex["question"]
@@ -98,7 +94,7 @@ def evaluate_recall(model, corpus, embeddings, dataset, top_k_values, faiss_inde
             sorted_idx = candidates_idx
 
         # Evaluate Recall@K
-        for k in top_k_values:
+        for k in top_k:
             retrieved = [corpus[i].lower() for i in sorted_idx[:k]]
             found = any(any(a in p for a in aliases) for p in retrieved)
             recalls[k].append(int(found))
@@ -109,21 +105,21 @@ def evaluate_recall(model, corpus, embeddings, dataset, top_k_values, faiss_inde
 # ======================================================
 # ORCHESTRATION FUNCTION
 # ======================================================
-def run_evaluation(config: Config = DEFAULT_CONFIG):
+def run_evaluation(config: Config = DEFAULT_CONFIG, sample_limit=100, candidates=100, top_k=3):
     DATA_DIRS = {
-        "train": config.TRAIN_DIR,
-        "validation": config.VAL_DIR,
-        "test": config.TEST_DIR
+        "train": config.train_dir,
+        "validation": config.val_dir,
+        "test": config.test_dir
     }
     corpus, emb, faiss_index = load_embeddings(config)
-    model = SentenceTransformer(config.EMBEDDING_MODEL, device=DEVICE)
-    reranker = CrossEncoder(RERANK_MODEL_NAME, device=DEVICE)
+    model = SentenceTransformer(config.embedding_model, device=DEVICE)
+    reranker = CrossEncoder(config.rerank_model, device=DEVICE)
 
     for name, path in DATA_DIRS.items():
-        print(f"\n=== 🔥 Evaluating {name.upper()} — first {DEV_LIMIT} samples ===")
-        dataset = load_all_shards(path)
+        print(f"\n=== 🔥 Evaluating {name.upper()} — first {sample_limit} samples ===")
+        dataset = load_all_shards(path, config.shard_prefix, sample_limit)
 
-        results = evaluate_recall(model, corpus, emb, dataset, TOP_K_VALUES, faiss_index, reranker)
+        results = evaluate_recall(model, corpus, emb, dataset, candidates, top_k, faiss_index, reranker)
         for k, score in results.items():
             print(f"Recall@{k}: {score:.4f}")
 
