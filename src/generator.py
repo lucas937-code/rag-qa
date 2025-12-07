@@ -81,10 +81,199 @@ def call_ollama(messages, ollama_url, model, max_new_tokens=MAX_GEN_TOKENS):
 
 
 # ==============================
-# Generate answer from combined top-K context
+# LLM-based evidence selection helpers
+# ==============================
+
+def _filter_passages_with_llm_hf(query, passages, config: Config = DEFAULT_CONFIG):
+    """
+    Use the generator model itself to decide which passages contain enough
+    information to answer the question.
+    Returns a list of passages predicted as relevant.
+    """
+    if not passages:
+        return []
+
+    tokenizer, model = get_generator(config.generator_model)
+    if tokenizer is None or model is None:
+        raise RuntimeError("Generator model or tokenizer not loaded.")
+
+    selected = []
+    for passage in passages:
+        prompt = (
+            "You are helping to select useful evidence passages for question answering.\n"
+            f"Question: {query}\n\n"
+            f"Passage:\n{passage}\n\n"
+            "Does this passage contain enough information to answer the question?\n"
+            "Answer with a single word: YES or NO."
+        )
+
+        inputs = tokenizer(
+            prompt,
+            return_tensors="pt",
+            truncation=True,
+            max_length=MAX_INPUT_LENGTH,
+            padding=True,
+        ).to(model.device)
+
+        with torch.no_grad():
+            output = model.generate(
+                **inputs,
+                max_new_tokens=4,
+                do_sample=False,
+                eos_token_id=tokenizer.eos_token_id,
+                pad_token_id=tokenizer.pad_token_id,
+            )
+
+        text = tokenizer.decode(output[0], skip_special_tokens=True).strip().lower()
+        if text.startswith("yes"):
+            selected.append(passage)
+
+    return selected
+
+
+def _filter_passages_with_llm_ollama(query, passages, config: OllamaConfig):
+    """
+    Ollama variant of LLM-based passage filtering.
+    """
+    if not passages:
+        return []
+
+    selected = []
+    for passage in passages:
+        messages = [
+            {
+                "role": "system",
+                "content": (
+                    "You are helping to select useful evidence passages for question answering. "
+                    "Decide if the passage contains enough information to answer the question."
+                ),
+            },
+            {
+                "role": "user",
+                "content": (
+                    f"Question: {query}\n\n"
+                    f"Passage:\n{passage}\n\n"
+                    "Does this passage contain enough information to answer the question?\n"
+                    "Answer with a single word: YES or NO."
+                ),
+            },
+        ]
+
+        text = call_ollama(
+            messages,
+            ollama_url=config.ollama_url,
+            model=config.generator_model,
+            max_new_tokens=4,
+        ).strip().lower()
+
+        if text.startswith("yes"):
+            selected.append(passage)
+
+    return selected
+
+
+def _rewrite_query_with_llm_hf(query, config: Config = DEFAULT_CONFIG):
+    """
+    Ask the generator to rewrite the question as a concise search query.
+    Used for a single optional re-retrieval step when no passage was selected.
+    """
+    tokenizer, model = get_generator(config.generator_model)
+    if tokenizer is None or model is None:
+        raise RuntimeError("Generator model or tokenizer not loaded.")
+
+    prompt = (
+        "Rewrite the following question as a concise search query containing only the most important keywords.\n"
+        "Return only the rewritten query.\n\n"
+        f"Question: {query}"
+    )
+
+    inputs = tokenizer(
+        prompt,
+        return_tensors="pt",
+        truncation=True,
+        max_length=MAX_INPUT_LENGTH,
+        padding=True,
+    ).to(model.device)
+
+    with torch.no_grad():
+        output = model.generate(
+            **inputs,
+            max_new_tokens=MAX_GEN_TOKENS,
+            do_sample=False,
+            eos_token_id=tokenizer.eos_token_id,
+            pad_token_id=tokenizer.pad_token_id,
+        )
+
+    rewritten = tokenizer.decode(output[0], skip_special_tokens=True).strip()
+    return rewritten or query
+
+
+def _rewrite_query_with_llm_ollama(query, config: OllamaConfig):
+    messages = [
+        {
+            "role": "system",
+            "content": (
+                "Rewrite user questions into concise search queries that work well for dense passage retrieval. "
+                "Keep only the most important keywords."
+            ),
+        },
+        {
+            "role": "user",
+            "content": (
+                "Rewrite the following question as a concise search query. "
+                "Return only the rewritten query.\n\n"
+                f"Question: {query}"
+            ),
+        },
+    ]
+
+    rewritten = call_ollama(
+        messages,
+        ollama_url=config.ollama_url,
+        model=config.generator_model,
+        max_new_tokens=MAX_GEN_TOKENS,
+    ).strip()
+
+    return rewritten or query
+
+
+# ==============================
+# Generate answer with LLM-selected evidence
 # ==============================
 def generate_answer_combined_ollama(query, retriever, corpus, embeddings, config: OllamaConfig, top_k=5):
-    top_passages, _ = retriever.retrieve_top_k(query, corpus, embeddings, config.embedding_model, config.rerank_model, k=top_k)
+    # First retrieve a larger candidate set
+    candidate_k = max(top_k * 4, top_k + 5)
+    candidate_passages, _ = retriever.retrieve_top_k(
+        query,
+        corpus,
+        embeddings,
+        config.embedding_model,
+        config.rerank_model,
+        k=candidate_k,
+    )
+
+    # LLM-based filtering of candidates
+    selected_passages = _filter_passages_with_llm_ollama(query, candidate_passages, config=config)
+
+    # Optional: single re-retrieval with rewritten query if nothing was selected
+    if not selected_passages:
+        rewritten_query = _rewrite_query_with_llm_ollama(query, config=config)
+        retry_candidates, _ = retriever.retrieve_top_k(
+            rewritten_query,
+            corpus,
+            embeddings,
+            config.embedding_model,
+            config.rerank_model,
+            k=candidate_k,
+        )
+        selected_passages = _filter_passages_with_llm_ollama(rewritten_query, retry_candidates, config=config)
+
+    # Fallback: if still nothing selected, fall back to top_k candidates from the first retrieval
+    if not selected_passages:
+        top_passages = candidate_passages[:top_k]
+    else:
+        top_passages = selected_passages[:top_k]
+
     context_block = "\n\n".join(
         [f"Passage {i+1}:\n{p}" for i, p in enumerate(top_passages)]
     )
@@ -117,7 +306,39 @@ def generate_answer_combined_hf(query, retriever, corpus, embeddings, top_k=5, c
     if tokenizer is None or model is None:
         raise RuntimeError("Generator model or tokenizer not loaded.")
 
-    top_passages, _ = retriever.retrieve_top_k(query, corpus, embeddings, config.embedding_model, config.rerank_model, k=top_k)
+    # First retrieve a larger candidate set
+    candidate_k = max(top_k * 4, top_k + 5)
+    candidate_passages, _ = retriever.retrieve_top_k(
+        query,
+        corpus,
+        embeddings,
+        config.embedding_model,
+        config.rerank_model,
+        k=candidate_k,
+    )
+
+    # LLM-based filtering of candidates
+    selected_passages = _filter_passages_with_llm_hf(query, candidate_passages, config=config)
+
+    # Optional: single re-retrieval with rewritten query if nothing was selected
+    if not selected_passages:
+        rewritten_query = _rewrite_query_with_llm_hf(query, config=config)
+        retry_candidates, _ = retriever.retrieve_top_k(
+            rewritten_query,
+            corpus,
+            embeddings,
+            config.embedding_model,
+            config.rerank_model,
+            k=candidate_k,
+        )
+        selected_passages = _filter_passages_with_llm_hf(rewritten_query, retry_candidates, config=config)
+
+    # Fallback: if still nothing selected, fall back to top_k candidates from the first retrieval
+    if not selected_passages:
+        top_passages = candidate_passages[:top_k]
+    else:
+        top_passages = selected_passages[:top_k]
+
     context_block = "\n\n".join(
         [f"Passage {i+1}:\n{p}" for i, p in enumerate(top_passages)]
     )
