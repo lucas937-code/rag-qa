@@ -242,7 +242,7 @@ def _rewrite_query_with_llm_ollama(query, config: OllamaConfig):
 # ==============================
 
 def _normalize_text_for_match(text: str) -> str:
-    text = text.lower().strip()#
+    text = text.lower().strip()
     # collapse internal whitespace
     return " ".join(text.split())
 
