@@ -238,138 +238,6 @@ def _rewrite_query_with_llm_ollama(query, config: OllamaConfig):
 
 
 # ==============================
-# Answer-in-context helper
-# ==============================
-
-def _normalize_text_for_match(text: str) -> str:
-    text = text.lower().strip()
-    # collapse internal whitespace
-    return " ".join(text.split())
-
-
-def _answer_in_passages(answer: str, passages) -> bool:
-    if not answer:
-        return False
-    norm_ans = _normalize_text_for_match(answer)
-    if not norm_ans:
-        return False
-    for p in passages:
-        if norm_ans in _normalize_text_for_match(p):
-            return True
-    return False
-
-
-# ==============================
-# Generation helpers (HF / Ollama)
-# ==============================
-
-def _generate_from_passages_hf(query, top_passages, config: Config, allow_idk: bool):
-    tokenizer, model = get_generator(config.generator_model)
-    if tokenizer is None or model is None:
-        raise RuntimeError("Generator model or tokenizer not loaded.")
-
-    context_block = "\n\n".join(
-        [f"Passage {i+1}:\n{p}" for i, p in enumerate(top_passages)]
-    )
-
-    base_instructions = (
-        "You are a question answering assistant for a trivia dataset. "
-        "Use only the information in the passages to answer the question. "
-        "Prefer short, factual answers. "
-        "Your answer must be copied exactly from the passages, "
-        "or be a very small normalization (for example, different casing or removing 'the'). "
-    )
-
-    if allow_idk:
-        idk_instruction = (
-            "If no word, phrase, name, or number in the passages could reasonably answer the question, "
-            "respond exactly with \"I don't know\". "
-        )
-    else:
-        idk_instruction = (
-            "Always choose the most plausible answer mentioned in the passages. "
-            "Never respond with \"I don't know\". "
-        )
-
-    prompt = (
-        base_instructions
-        + idk_instruction
-        + "\n\n"
-        f"Question: {query}\n\n"
-        f"Passages:\n{context_block}\n\n"
-        "Give only the final answer as a short phrase (no explanation, no full sentence)."
-    )
-
-    inputs = tokenizer(
-        prompt,
-        return_tensors="pt",
-        truncation=True,
-        max_length=MAX_INPUT_LENGTH,
-        padding=True,
-    ).to(model.device)
-
-    with torch.no_grad():
-        output = model.generate(
-            **inputs,
-            max_new_tokens=MAX_GEN_TOKENS,
-            do_sample=False,
-            eos_token_id=tokenizer.eos_token_id,
-            pad_token_id=tokenizer.pad_token_id,
-        )
-
-    answer = tokenizer.decode(output[0], skip_special_tokens=True).strip()
-    return answer
-
-
-def _generate_from_passages_ollama(query, top_passages, config: OllamaConfig, allow_idk: bool):
-    context_block = "\n\n".join(
-        [f"Passage {i+1}:\n{p}" for i, p in enumerate(top_passages)]
-    )
-
-    base_system = (
-        "You are a question answering assistant for a trivia dataset. "
-        "Use only the information in the passages to answer the question. "
-        "Prefer short, factual answers. "
-        "Your answer must be copied exactly from the passages, "
-        "or be a very small normalization (for example, different casing or removing 'the'). "
-    )
-
-    if allow_idk:
-        idk_system = (
-            "If no word, phrase, name, or number in the passages could reasonably answer the question, "
-            "respond exactly with \"I don't know\". "
-        )
-    else:
-        idk_system = (
-            "Always choose the most plausible answer mentioned in the passages. "
-            "Never respond with \"I don't know\". "
-        )
-
-    messages = [
-        {
-            "role": "system",
-            "content": base_system + idk_system,
-        },
-        {
-            "role": "user",
-            "content": (
-                f"Question: {query}\n\n"
-                f"Passages:\n{context_block}\n\n"
-                "Give only the final answer as a short phrase (no explanation, no full sentence)."
-            ),
-        },
-    ]
-
-    answer = call_ollama(
-        messages,
-        ollama_url=config.ollama_url,
-        model=config.generator_model,
-        max_new_tokens=MAX_GEN_TOKENS,
-    ).strip()
-    return answer
-
-
-# ==============================
 # Generate answer with LLM-selected evidence
 # ==============================
 def generate_answer_combined_ollama(query, retriever, corpus, embeddings, config: OllamaConfig, top_k=5):
@@ -406,24 +274,38 @@ def generate_answer_combined_ollama(query, retriever, corpus, embeddings, config
     else:
         top_passages = selected_passages[:top_k]
 
-    # First pass: allow "I don't know"
-    answer = _generate_from_passages_ollama(query, top_passages, config=config, allow_idk=True)
-    norm_answer = answer.lower().strip()
+    context_block = "\n\n".join(
+        [f"Passage {i+1}:\n{p}" for i, p in enumerate(top_passages)]
+    )
 
-    # If model says "I don't know", try a second pass where it must pick a candidate
-    if norm_answer in {"i don't know", "i dont know", "idk"}:
-        second_answer = _generate_from_passages_ollama(query, top_passages, config=config, allow_idk=False)
-        if _answer_in_passages(second_answer, top_passages):
-            answer = second_answer
-        # else keep original "I don't know"
-    else:
-        # If answer is not found in the passages, be conservative and fall back to "I don't know"
-        if not _answer_in_passages(answer, top_passages):
-            answer = "I don't know"
+    messages = [
+        {
+            "role": "system",
+            "content": (
+                "You are a question answering assistant for a trivia dataset. "
+                "Use only the information in the passages to answer the question. "
+                "Prefer short, factual answers. "
+                "If the passages do not clearly contain the answer, respond exactly with \"I don't know\"."
+            ),
+        },
+        {
+            "role": "user",
+            "content": (
+                f"Question: {query}\n\n"
+                f"Passages:\n{context_block}\n\n"
+                "Give only the final answer as a short phrase (no explanation, no full sentence)."
+            ),
+        },
+    ]
 
+    answer = call_ollama(messages, config.ollama_url, model=config.generator_model, max_new_tokens=MAX_GEN_TOKENS).strip()
     return answer, top_passages
 
 def generate_answer_combined_hf(query, retriever, corpus, embeddings, top_k=5, config: Config = DEFAULT_CONFIG):
+    tokenizer, model = get_generator(config.generator_model)
+    if tokenizer is None or model is None:
+        raise RuntimeError("Generator model or tokenizer not loaded.")
+
     # First retrieve a larger candidate set
     candidate_k = max(top_k * 4, top_k + 5)
     candidate_passages, _ = retriever.retrieve_top_k(
@@ -457,21 +339,38 @@ def generate_answer_combined_hf(query, retriever, corpus, embeddings, top_k=5, c
     else:
         top_passages = selected_passages[:top_k]
 
-    # First pass: allow "I don't know"
-    answer = _generate_from_passages_hf(query, top_passages, config=config, allow_idk=True)
-    norm_answer = answer.lower().strip()
+    context_block = "\n\n".join(
+        [f"Passage {i+1}:\n{p}" for i, p in enumerate(top_passages)]
+    )
 
-    # If model says "I don't know", try a second pass where it must pick a candidate
-    if norm_answer in {"i don't know", "i dont know", "idk"}:
-        second_answer = _generate_from_passages_hf(query, top_passages, config=config, allow_idk=False)
-        if _answer_in_passages(second_answer, top_passages):
-            answer = second_answer
-        # else keep original "I don't know"
-    else:
-        # If answer is not found in the passages, be conservative and fall back to "I don't know"
-        if not _answer_in_passages(answer, top_passages):
-            answer = "I don't know"
+    prompt = (
+        "You are a question answering assistant for a trivia dataset. "
+        "Use only the information in the passages to answer the question. "
+        "Prefer short, factual answers. "
+        "If the passages do not clearly contain the answer, respond exactly with \"I don't know\".\n\n"
+        f"Question: {query}\n\n"
+        f"Passages:\n{context_block}\n\n"
+        "Give only the final answer as a short phrase (no explanation, no full sentence)."
+    )
 
+    inputs = tokenizer(
+        prompt,
+        return_tensors="pt",
+        truncation=True,
+        max_length=MAX_INPUT_LENGTH,
+        padding=True,
+    ).to(model.device)
+
+    with torch.no_grad():
+        output = model.generate(
+            **inputs,
+            max_new_tokens=MAX_GEN_TOKENS,
+            do_sample=False,
+            eos_token_id=tokenizer.eos_token_id,
+            pad_token_id=tokenizer.pad_token_id,
+        )
+
+    answer = tokenizer.decode(output[0], skip_special_tokens=True).strip()
     return answer, top_passages
 
 def generate_answer_combined(query, retriever, corpus, embeddings, top_k=5, config: Config = DEFAULT_CONFIG):
