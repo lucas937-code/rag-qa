@@ -17,6 +17,7 @@ from src.generator import (
     load_embeddings,           # your FAISS + passages loader
     generate_answer_combined,  # your retrieval + generation
 )
+from src.no_rag_generator import generate_answer_no_rag
 from src.retriever import Retriever
 
 # ======================== LOAD TEST SHARDS ======================== #
@@ -71,9 +72,12 @@ def f1_score(pred: str, gold: str) -> float:
 def run_full_rag_eval(config: Config = DEFAULT_CONFIG,
                       max_questions: int = 100,
                       top_k=3,
-                      save_file: str | None = None):
-    print("\n=== Loading embeddings / FAISS index ===")
-    corpus, emb = load_embeddings(config=config)   # emb can be None, we use FAISS inside
+                      save_file: str | None = None,
+                      use_rag = True):
+    if use_rag:
+        print("\n=== Loading embeddings / FAISS index ===")
+        corpus, emb = load_embeddings(config=config)   # emb can be None, we use FAISS inside
+        retriever = Retriever()
 
     print("\n=== Loading Test dataset ===")
     test = load_test_100(config, max_questions=max_questions)
@@ -82,20 +86,24 @@ def run_full_rag_eval(config: Config = DEFAULT_CONFIG,
     output_log = []
 
     print("\n=== Running RAG Evaluation ===")
-    retriever = Retriever()
     for ex in tqdm(test):
         q = ex["question"]
         gold = ex["answer"]["normalized_value"]
         aliases = ex["answer"]["normalized_aliases"] + [gold]
 
-        # RAG: retrieval + generation (uses FAISS + reranker + generator from src.generator)
-        pred, retrieved = generate_answer_combined(
-            q, retriever,
-            corpus,
-            emb,
-            top_k=top_k,
-            config=config,
-        )
+        if use_rag:
+            # RAG: retrieval + generation (uses FAISS + reranker + generator from src.generator)
+            pred, retrieved = generate_answer_combined(
+                q, 
+                retriever,
+                corpus,
+                emb,
+                top_k=top_k,
+                config=config,
+            )
+        else:
+            pred = generate_answer_no_rag(q, config)
+            retrieved = []
 
         # Metrics: max over all aliases (TriviaQA-style)
         em = max(em_score(pred, a) for a in aliases)
