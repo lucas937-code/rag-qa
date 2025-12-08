@@ -94,9 +94,9 @@ def generate_answer_combined_ollama(query, retriever, corpus, embeddings, config
             "role": "system",
             "content": (
                 "You are a question answering assistant for a trivia dataset. "
-                "Use only the information in the passages to answer the question. "
+                "Use the information in the passages to answer the question. "
                 "Prefer short, factual answers. "
-                "If the passages do not clearly contain the answer, respond exactly with \"I don't know\"."
+                "If the passages do not clearly contain the answer, answer it based on your own knowledge. "
             ),
         },
         {
@@ -124,9 +124,9 @@ def generate_answer_combined_hf(query, retriever, corpus, embeddings, top_k=5, c
 
     prompt = (
         "You are a question answering assistant for a trivia dataset. "
-        "Use only the information in the passages to answer the question. "
+        "Use the information in the passages to answer the question. "
         "Prefer short, factual answers. "
-        "If the passages do not clearly contain the answer, respond exactly with \"I don't know\".\n\n"
+        "If the passages do not clearly contain the answer, answer it based on your own knowledge. \n\n"
         f"Question: {query}\n\n"
         f"Passages:\n{context_block}\n\n"
         "Give only the final answer as a short phrase (no explanation, no full sentence)."
