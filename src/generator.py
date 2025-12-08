@@ -85,20 +85,27 @@ def call_ollama(messages, ollama_url, model, max_new_tokens=MAX_GEN_TOKENS):
 # ==============================
 def generate_answer_combined_ollama(query, retriever, corpus, embeddings, config: OllamaConfig, top_k=5):
     top_passages, _ = retriever.retrieve_top_k(query, corpus, embeddings, config.embedding_model, config.rerank_model, k=top_k)
-    context_block = "\n---\n".join(top_passages)
+    context_block = "\n\n".join(
+        [f"Passage {i+1}:\n{p}" for i, p in enumerate(top_passages)]
+    )
 
-    # Simple text prompt for Flan-T5 (no chat template)
     messages = [
         {
             "role": "system",
             "content": (
-                "You are a concise QA assistant. Answer ONLY from the provided context. "
-                "If you are unsure, reply \"I don't know\". Respond with the answer only."
+                "You are a question answering assistant for a trivia dataset. "
+                "Use the information in the passages to answer the question. "
+                "Prefer short, factual answers. "
+                "If the passages do not clearly contain the answer, answer it based on your own knowledge. "
             ),
         },
         {
             "role": "user",
-            "content": f"Context:\n{context_block}\n\nQuestion: {query}\nAnswer:",
+            "content": (
+                f"Question: {query}\n\n"
+                f"Passages:\n{context_block}\n\n"
+                "Give only the final answer as a short phrase (no explanation, no full sentence)."
+            ),
         },
     ]
 
@@ -111,13 +118,18 @@ def generate_answer_combined_hf(query, retriever, corpus, embeddings, top_k=5, c
         raise RuntimeError("Generator model or tokenizer not loaded.")
 
     top_passages, _ = retriever.retrieve_top_k(query, corpus, embeddings, config.embedding_model, config.rerank_model, k=top_k)
-    context_block = "\n---\n".join(top_passages)
+    context_block = "\n\n".join(
+        [f"Passage {i+1}:\n{p}" for i, p in enumerate(top_passages)]
+    )
 
-    # Simple text prompt for Flan-T5 (no chat template)
     prompt = (
-        "You are a concise QA assistant. Answer ONLY from the provided context. "
-        "If you are unsure, reply \"I don't know\". Respond in <=20 words.\n\n"
-        f"Context:\n{context_block}\n\nQuestion: {query}\nAnswer:"
+        "You are a question answering assistant for a trivia dataset. "
+        "Use the information in the passages to answer the question. "
+        "Prefer short, factual answers. "
+        "If the passages do not clearly contain the answer, answer it based on your own knowledge. \n\n"
+        f"Question: {query}\n\n"
+        f"Passages:\n{context_block}\n\n"
+        "Give only the final answer as a short phrase (no explanation, no full sentence)."
     )
 
     inputs = tokenizer(
