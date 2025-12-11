@@ -16,6 +16,7 @@ from src.config import Config, DEFAULT_CONFIG
 from src.generator import (
     load_embeddings,           # your FAISS + passages loader
     generate_answer_combined,  # your retrieval + generation
+    generate_answer_consensus, # alternative: retrieval + generation + consensus
 )
 from src.retriever import Retriever
 
@@ -71,7 +72,8 @@ def f1_score(pred: str, gold: str) -> float:
 def run_full_rag_eval(config: Config = DEFAULT_CONFIG,
                       max_questions: int = 100,
                       top_k=3,
-                      save_file: str | None = None):
+                      save_file: str | None = None,
+                      use_consensus: bool = False):
     print("\n=== Loading embeddings / FAISS index ===")
     corpus, emb = load_embeddings(config=config)   # emb can be None, we use FAISS inside
 
@@ -88,14 +90,17 @@ def run_full_rag_eval(config: Config = DEFAULT_CONFIG,
         gold = ex["answer"]["normalized_value"]
         aliases = ex["answer"]["normalized_aliases"] + [gold]
 
-        # RAG: retrieval + generation (uses FAISS + reranker + generator from src.generator)
-        pred, retrieved = generate_answer_combined(
-            q, retriever,
-            corpus,
-            emb,
-            top_k=top_k,
-            config=config,
-        )
+        if use_consensus:
+            pred, retrieved = generate_answer_consensus(q, retriever, corpus, emb, top_k=top_k, config=config, n_samples=3)
+        else:
+            # RAG: retrieval + generation (uses FAISS + reranker + generator from src.generator)
+            pred, retrieved = generate_answer_combined(
+                q, retriever,
+                corpus,
+                emb,
+                top_k=top_k,
+                config=config,
+            )
 
         # Metrics: max over all aliases (TriviaQA-style)
         em = max(em_score(pred, a) for a in aliases)
