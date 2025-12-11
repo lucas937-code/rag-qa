@@ -121,7 +121,7 @@ class OllamaConfig(Config):
                  ollama_url="http://127.0.0.1:11434/api/chat",
                  val_split_size=7900,
                  shard_batch_size=1000) -> None:
-        super().__init__(base_dir=base_dir,
+        super().__init__(base_dir=base_dir.absolute().as_posix(),
                          hf_cache_dir=hf_cache_dir,
                          data_dir=data_dir,
                          train_dir=train_dir,
@@ -136,9 +136,5 @@ class OllamaConfig(Config):
                          val_split_size=val_split_size,
                          shard_batch_size=shard_batch_size)
         self.ollama_url = ollama_url
-    
-
-def is_colab():
-    return "google.colab" in sys.modules
 
 DEFAULT_CONFIG = LocalConfig()
