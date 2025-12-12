@@ -55,3 +55,10 @@ compare acc on test and train dataset
     - $precision = \frac{num_{same}}{|tokens_{prediction}|}$
     - $recall = \frac{num_{same}}{|tokens_{golden}|}$
 5. Calculate F1 score: $F1 = 2 \cdot precision \cdot \frac{recall}{precision + recall}$ ($0$ if $num_{same}=0$)
+
+# How to use Ollama
+
+1. install Ollama & the desired model
+2. run Ollama server: `ollama serve`
+3. set `USE_OLLAMA = True`, the Ollama host & port in first cell of `pipeline.ipynb`  
+Done. the rest should work automatically
